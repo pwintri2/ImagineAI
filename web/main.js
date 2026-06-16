@@ -167,7 +167,7 @@ async function handleGenerateImage() {
       (job) => GalleryView.updateStatus(progressLabel(job, started, progressBase)),
     );
     if (!results.length) throw new Error('No images were returned.');
-    GalleryView.renderResults(results);
+    GalleryView.renderResults(results, { prompt });
     showToast('Image created!', 'success');
     saveHistoryEntry({ prompt, modelTitle, images: results, createdAt: Date.now() });
   } catch (err) {
@@ -212,7 +212,7 @@ async function handleGenerateVideo() {
       (job) => VideoGalleryView.updateStatus(progressLabel(job, started, progressBase)),
     );
     if (!results.length) throw new Error('No video was returned.');
-    VideoGalleryView.renderResults(results, { modelTitle });
+    VideoGalleryView.renderResults(results, { modelTitle, prompt });
     showToast('Video created!', 'success');
     saveVideoHistoryEntry({ prompt, modelTitle, videos: results, createdAt: Date.now() });
   } catch (err) {

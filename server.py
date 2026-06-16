@@ -648,6 +648,20 @@ def download_url_to_output(url: str, prefix: str, fallback_ext: str,
     return save_output_bytes(prefix, raw, ext)
 
 
+def safe_download_name(value: object, fallback: str) -> str:
+    name = str(value or "").strip()
+    name = re.sub(r"[^A-Za-z0-9._ -]+", "_", name)
+    name = re.sub(r"\s+", " ", name).strip(" .")
+    if not name:
+        name = fallback
+    return name[:160] or fallback
+
+
+def content_disposition_attachment(filename: str) -> str:
+    safe = filename.replace("\\", "_").replace('"', "_")
+    return f'attachment; filename="{safe}"'
+
+
 # --------------------------------------------------------------------------- #
 # Gemini cloud image fallback
 # --------------------------------------------------------------------------- #
@@ -1099,6 +1113,35 @@ class Handler(BaseHTTPRequestHandler):
     def _json(self, code: int, payload: dict[str, Any]) -> None:
         self._send(code, json.dumps(payload).encode("utf-8"), "application/json; charset=utf-8")
 
+    def _send_media(self, body: bytes, content_type: str, extra: dict[str, str] | None = None) -> None:
+        headers = {"Accept-Ranges": "bytes", **(extra or {})}
+        range_header = self.headers.get("Range", "")
+        if not range_header.startswith("bytes="):
+            return self._send(200, body, content_type, headers)
+
+        total = len(body)
+        try:
+            spec = range_header.removeprefix("bytes=").split(",", 1)[0].strip()
+            start_s, _, end_s = spec.partition("-")
+            if start_s:
+                start = int(start_s)
+                end = int(end_s) if end_s else total - 1
+            else:
+                suffix = int(end_s)
+                start = max(0, total - suffix)
+                end = total - 1
+            if start < 0 or end < start or start >= total:
+                raise ValueError
+            end = min(end, total - 1)
+        except (TypeError, ValueError):
+            return self._send(416, b"", content_type, {"Content-Range": f"bytes */{total}", **headers})
+
+        chunk = body[start:end + 1]
+        return self._send(206, chunk, content_type, {
+            **headers,
+            "Content-Range": f"bytes {start}-{end}/{total}",
+        })
+
     def _read_json(self) -> dict[str, Any]:
         try:
             length = int(self.headers.get("Content-Length") or 0)
@@ -1206,8 +1249,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def api_comfy_view(self, query: str) -> None:
         params = urllib.parse.parse_qs(query)
+        filename = params.get("filename", [""])[0]
         fwd = urllib.parse.urlencode({
-            "filename": params.get("filename", [""])[0],
+            "filename": filename,
             "subfolder": params.get("subfolder", [""])[0],
             "type": params.get("type", ["output"])[0] or "output",
         })
@@ -1215,16 +1259,29 @@ class Handler(BaseHTTPRequestHandler):
             blob, ctype = comfy_get_bytes(f"/view?{fwd}", timeout=120)
         except Exception as exc:  # noqa: BLE001
             return self._json(502, {"error": f"Could not fetch media from ComfyUI: {exc}"})
-        self._send(200, blob, ctype)
+        extra: dict[str, str] = {}
+        download_name = params.get("downloadName", [""])[0]
+        if download_name:
+            extra["Content-Disposition"] = content_disposition_attachment(
+                safe_download_name(download_name, Path(filename).name or "imagineai-media")
+            )
+        self._send_media(blob, ctype, extra)
 
     def api_local_media(self, query: str) -> None:
-        name = urllib.parse.parse_qs(query).get("name", [""])[0]
+        params = urllib.parse.parse_qs(query)
+        name = params.get("name", [""])[0]
         safe = Path(name).name  # strip any path components
         target = OUTPUTS_DIR / safe
         if not safe or not target.exists() or not target.is_file():
             return self._json(404, {"error": "Not found"})
         ctype = CONTENT_TYPES.get(target.suffix.lower(), "application/octet-stream")
-        self._send(200, target.read_bytes(), ctype)
+        extra: dict[str, str] = {}
+        download_name = params.get("downloadName", [""])[0]
+        if download_name:
+            extra["Content-Disposition"] = content_disposition_attachment(
+                safe_download_name(download_name, target.name)
+            )
+        self._send_media(target.read_bytes(), ctype, extra)
 
     def serve_static(self, path: str) -> None:
         rel = "index.html" if path in ("", "/") else path.lstrip("/")
