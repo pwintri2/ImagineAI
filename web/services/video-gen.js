@@ -1,6 +1,10 @@
 import { startVideoJob, pollJob } from './api.js';
 
 export const VIDEO_MODELS = {
+  xai: {
+    id: 'xai', title: 'Grok Imagine', subtitle: 'Cloud · xAI',
+    note: 'xAI text-to-video and image-to-video · uses your xAI quota', defaultSeconds: 5,
+  },
   wan22_14b: {
     id: 'wan22_14b', title: 'Wan 2.2 14B', subtitle: 'Highest quality',
     note: 'Dual-model + 4-step LoRA · slower, sharper', defaultSeconds: 2,

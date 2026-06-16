@@ -59,6 +59,7 @@ function availabilityKey(config) {
     img: config.models?.image || {},
     vid: config.models?.video || {},
     gem: !!config.geminiConfigured,
+    xai: !!config.xaiConfigured,
   });
 }
 
@@ -102,17 +103,21 @@ function reconcileEngine(config) {
   const s = getState();
   const localImg = !!(config.comfyReachable && config.models?.image?.zimage_turbo);
   const gemini = !!config.geminiConfigured;
+  const xai = !!config.xaiConfigured;
   let engine = s.imageEngine;
-  if (engine === 'local' && !localImg && gemini) engine = 'gemini';
-  if (engine === 'gemini' && !gemini && localImg) engine = 'local';
+  if (engine === 'local' && !localImg) engine = xai ? 'xai' : (gemini ? 'gemini' : engine);
+  if (engine === 'gemini' && !gemini) engine = localImg ? 'local' : (xai ? 'xai' : engine);
+  if (engine === 'xai' && !xai) engine = localImg ? 'local' : (gemini ? 'gemini' : engine);
   if (engine !== s.imageEngine) setState({ imageEngine: engine });
 
   let vModel = s.videoModel;
   const v = config.models?.video || {};
-  if (!v[vModel]) {
+  const selectedVideoAvailable = vModel === 'xai' ? xai : !!v[vModel];
+  if (!selectedVideoAvailable) {
     if (v.wan22_14b) vModel = 'wan22_14b';
     else if (v.wan22_ti2v_5b) vModel = 'wan22_ti2v_5b';
     else if (v.wan21_1_3b) vModel = 'wan21_1_3b';
+    else if (xai) vModel = 'xai';
     else vModel = '';
   }
   if (vModel !== s.videoModel) setState({ videoModel: vModel });
@@ -121,6 +126,7 @@ function reconcileEngine(config) {
 function updateStatus(config) {
   const localImg = !!(config.comfyReachable && config.models?.image?.zimage_turbo);
   if (localImg) setStatus(true, 'ComfyUI ready');
+  else if (config.xaiConfigured) setStatus(true, 'Grok ready');
   else if (config.geminiConfigured) setStatus(true, 'Gemini ready');
   else if (config.comfyReachable) setStatus(true, 'ComfyUI (no Z-Image)');
   else setStatus(false, 'ComfyUI offline');
@@ -143,19 +149,22 @@ async function handleGenerateImage() {
   if (s.isGenerating) return;
   const engine = s.imageEngine;
   const localImg = !!(s.config.comfyReachable && s.config.models?.image?.zimage_turbo);
-  if (engine === 'local' && !localImg) { showToast('ComfyUI / Z-Image not available. Add a Gemini key or start ComfyUI.', 'error'); return; }
+  if (engine === 'local' && !localImg) { showToast('ComfyUI / Z-Image not available. Add a cloud key or start ComfyUI.', 'error'); return; }
   if (engine === 'gemini' && !s.config.geminiConfigured) { showToast('No Gemini key saved — open Settings to add one.', 'error'); return; }
+  if (engine === 'xai' && !s.config.xaiConfigured) { showToast('No xAI key saved — open Settings to add one.', 'error'); return; }
 
   setState({ isGenerating: true });
   PromptView.setGenerating(true);
-  const count = engine === 'gemini' ? Math.min(s.imageCount, 4) : s.imageCount;
-  GalleryView.renderLoading(count, { label: engine === 'gemini' ? 'Asking Gemini…' : 'Rendering on your GPU…' });
+  const count = s.imageCount;
+  const loadingLabel = engine === 'gemini' ? 'Asking Gemini…' : (engine === 'xai' ? 'Asking Grok Imagine…' : 'Rendering on your GPU…');
+  GalleryView.renderLoading(count, { label: loadingLabel });
   const started = Date.now();
 
   try {
+    const progressBase = engine === 'gemini' ? 'Gemini is painting' : (engine === 'xai' ? 'Grok Imagine is painting' : 'Z-Image rendering');
     const { results, modelTitle } = await generateImage(
       { prompt, engine, aspect: s.aspectRatio, count, steps: s.steps },
-      (job) => GalleryView.updateStatus(progressLabel(job, started, engine === 'gemini' ? 'Gemini is painting' : 'Z-Image rendering')),
+      (job) => GalleryView.updateStatus(progressLabel(job, started, progressBase)),
     );
     if (!results.length) throw new Error('No images were returned.');
     GalleryView.renderResults(results);
@@ -178,11 +187,16 @@ async function handleGenerateVideo() {
   const s = getState();
   if (s.isGeneratingVideo) return;
   const model = s.videoModel;
-  const available = !!(s.config.comfyReachable && s.config.models?.video?.[model]);
-  if (!available) { showToast('That video model is not available in ComfyUI.', 'error'); return; }
+  const available = model === 'xai'
+    ? !!s.config.xaiConfigured
+    : !!(s.config.comfyReachable && s.config.models?.video?.[model]);
+  if (!available) {
+    showToast(model === 'xai' ? 'No xAI key saved — open Settings to add one.' : 'That video model is not available in ComfyUI.', 'error');
+    return;
+  }
   const startImage = VideoPromptView.getStartImage();
-  if (startImage && model !== 'wan22_ti2v_5b') {
-    showToast('Start images work with Wan 2.2 TI2V 5B. Select that model first.', 'info');
+  if (startImage && !['wan22_ti2v_5b', 'xai'].includes(model)) {
+    showToast('Start images work with Wan 2.2 TI2V 5B or Grok Imagine. Select one of those first.', 'info');
     return;
   }
 
@@ -192,9 +206,10 @@ async function handleGenerateVideo() {
   const started = Date.now();
 
   try {
+    const progressBase = model === 'xai' ? 'Grok Imagine is rendering' : 'Wan is generating frames';
     const { results, modelTitle } = await generateVideo(
       { prompt, model, aspect: s.videoAspect, seconds: s.videoSeconds, startImage },
-      (job) => VideoGalleryView.updateStatus(progressLabel(job, started, 'Wan is generating frames')),
+      (job) => VideoGalleryView.updateStatus(progressLabel(job, started, progressBase)),
     );
     if (!results.length) throw new Error('No video was returned.');
     VideoGalleryView.renderResults(results, { modelTitle });
@@ -211,6 +226,7 @@ async function handleGenerateVideo() {
 }
 
 function videoModelTitle(model) {
+  if (model === 'xai') return 'Grok Imagine Video';
   if (model === 'wan22_ti2v_5b') return 'Wan 2.2 TI2V 5B';
   if (model === 'wan22_14b') return 'Wan 2.2 14B';
   return 'Wan 2.1 1.3B';

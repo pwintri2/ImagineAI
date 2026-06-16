@@ -44,6 +44,9 @@ SETTINGS_FILE = DATA_DIR / "settings.json"
 DEFAULT_COMFY_URL = os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188").rstrip("/")
 DEFAULT_GEMINI_MODEL = os.environ.get("GEMINI_IMAGE_MODEL", "gemini-2.5-flash-image")
 GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
+DEFAULT_XAI_IMAGE_MODEL = os.environ.get("XAI_IMAGE_MODEL", "grok-imagine-image-quality")
+DEFAULT_XAI_VIDEO_MODEL = os.environ.get("XAI_VIDEO_MODEL", "grok-imagine-video")
+XAI_BASE = os.environ.get("XAI_BASE_URL", "https://api.x.ai/v1").rstrip("/")
 
 # ComfyUI's Python (has PyAV) — used to transcode H.264 mp4 -> VP9 webm so the
 # Linux webkit2gtk webview, which usually lacks an H.264 decoder, can play video
@@ -54,6 +57,7 @@ COMFY_INPUT_DIR = Path(os.environ.get("COMFYUI_INPUT_DIR", "/home/pwintri2/Comfy
 COMFY_IMAGE_TIMEOUT = float(os.environ.get("IMAGINEAI_IMAGE_TIMEOUT", "600"))
 COMFY_VIDEO_TIMEOUT = float(os.environ.get("IMAGINEAI_VIDEO_TIMEOUT", "3600"))
 COMFY_MISSING_HISTORY_GRACE = float(os.environ.get("IMAGINEAI_MISSING_HISTORY_GRACE", "25"))
+XAI_VIDEO_TIMEOUT = float(os.environ.get("IMAGINEAI_XAI_VIDEO_TIMEOUT", "1200"))
 
 # Wan video shares the GPU with Z-Image; only one heavy ComfyUI job at a time.
 COMFY_LOCK = threading.Lock()
@@ -94,6 +98,7 @@ ASPECT_TO_GEMINI = {
     "wide": "16:9",
     "tall": "9:16",
 }
+ASPECT_TO_XAI = ASPECT_TO_GEMINI
 
 
 # --------------------------------------------------------------------------- #
@@ -138,6 +143,8 @@ def load_settings() -> dict[str, Any]:
     defaults = {
         "comfyUrl": DEFAULT_COMFY_URL,
         "geminiModel": DEFAULT_GEMINI_MODEL,
+        "xaiImageModel": DEFAULT_XAI_IMAGE_MODEL,
+        "xaiVideoModel": DEFAULT_XAI_VIDEO_MODEL,
         "defaultImageEngine": "local",
     }
     allowed = set(defaults)
@@ -162,7 +169,7 @@ def valid_http_url(url: str) -> bool:
 
 def save_settings(patch: dict[str, Any]) -> dict[str, Any]:
     current = load_settings()
-    for key in ("comfyUrl", "geminiModel", "defaultImageEngine"):
+    for key in ("comfyUrl", "geminiModel", "xaiImageModel", "xaiVideoModel", "defaultImageEngine"):
         if key in patch and isinstance(patch[key], str) and patch[key].strip():
             value = patch[key].strip()
             if key == "comfyUrl":
@@ -217,6 +224,10 @@ def save_secret(provider: str, key: str) -> None:
 
 def gemini_key() -> str:
     return load_secrets().get("gemini") or os.environ.get("GEMINI_API_KEY", "")
+
+
+def xai_key() -> str:
+    return load_secrets().get("xai") or os.environ.get("XAI_API_KEY", "")
 
 
 # --------------------------------------------------------------------------- #
@@ -565,10 +576,9 @@ def build_wan22_ti2v_graph(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return graph
 
 
-def save_start_image_for_comfy(data_url: object, original_name: object = "") -> str:
+def decode_image_data_url(data_url: object) -> tuple[str, bytes]:
     if not isinstance(data_url, str) or not data_url.strip():
-        return ""
-
+        raise ValueError("Start image must be a PNG, JPG, or WebP image.")
     match = re.match(r"^data:image/(png|jpe?g|webp);base64,(.+)$", data_url, re.I | re.S)
     if not match:
         raise ValueError("Start image must be a PNG, JPG, or WebP image.")
@@ -581,6 +591,14 @@ def save_start_image_for_comfy(data_url: object, original_name: object = "") -> 
 
     if len(raw) > 24 * 1024 * 1024:
         raise ValueError("Start image is too large. Use an image under 24 MB.")
+    return ext, raw
+
+
+def save_start_image_for_comfy(data_url: object, original_name: object = "") -> str:
+    if not isinstance(data_url, str) or not data_url.strip():
+        return ""
+
+    ext, raw = decode_image_data_url(data_url)
 
     words = re.findall(r"[A-Za-z0-9]+", str(original_name or "start"))[:4]
     slug = "_".join(words) or "start"
@@ -589,6 +607,45 @@ def save_start_image_for_comfy(data_url: object, original_name: object = "") -> 
     filename = f"i2v_{int(now())}_{uuid.uuid4().hex[:8]}_{slug}.{ext}"
     (upload_dir / filename).write_bytes(raw)
     return f"imagineai/{filename}"
+
+
+def output_url(name: str) -> str:
+    return f"/api/local-media?name={urllib.parse.quote(name)}"
+
+
+def media_ext_from_content_type(content_type: str, fallback: str) -> str:
+    ctype = (content_type or "").split(";", 1)[0].strip().lower()
+    if ctype == "image/png":
+        return ".png"
+    if ctype in ("image/jpeg", "image/jpg"):
+        return ".jpg"
+    if ctype == "image/webp":
+        return ".webp"
+    if ctype == "image/gif":
+        return ".gif"
+    if ctype == "video/webm":
+        return ".webm"
+    if ctype in ("video/mp4", "application/mp4"):
+        return ".mp4"
+    return fallback if fallback.startswith(".") else f".{fallback}"
+
+
+def save_output_bytes(prefix: str, raw: bytes, ext: str) -> tuple[str, Path, str]:
+    ensure_dirs()
+    safe_ext = ext if re.fullmatch(r"\.[A-Za-z0-9]+", ext) else ".bin"
+    name = f"{prefix}_{int(now())}_{uuid.uuid4().hex[:8]}{safe_ext.lower()}"
+    path = OUTPUTS_DIR / name
+    path.write_bytes(raw)
+    return output_url(name), path, name
+
+
+def download_url_to_output(url: str, prefix: str, fallback_ext: str,
+                           timeout: float = 240) -> tuple[str, Path, str]:
+    req = urllib.request.Request(url)
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        raw = response.read()
+        ext = media_ext_from_content_type(response.headers.get("Content-Type", ""), fallback_ext)
+    return save_output_bytes(prefix, raw, ext)
 
 
 # --------------------------------------------------------------------------- #
@@ -658,6 +715,113 @@ def gemini_generate_image(prompt: str, aspect: str, model: str, key: str) -> lis
 
 
 # --------------------------------------------------------------------------- #
+# xAI / Grok Imagine cloud image + video
+# --------------------------------------------------------------------------- #
+def xai_request_json(path: str, key: str, payload: dict[str, Any] | None = None,
+                     method: str = "GET", timeout: float = 120) -> dict[str, Any]:
+    body = None if payload is None else json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(f"{XAI_BASE}{path}", data=body, method=method)
+    req.add_header("Authorization", f"Bearer {key}")
+    if payload is not None:
+        req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            raw = response.read().decode("utf-8") or "{}"
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")
+        message = detail[:500]
+        try:
+            parsed = json.loads(detail)
+            err = parsed.get("error") if isinstance(parsed, dict) else None
+            if isinstance(err, dict):
+                message = str(err.get("message") or err.get("code") or message)
+            elif isinstance(err, str):
+                message = err
+        except (json.JSONDecodeError, TypeError):
+            pass
+        raise RuntimeError(f"xAI API error {exc.code}: {message}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Could not reach xAI API: {exc.reason}") from exc
+    return json.loads(raw)
+
+
+def xai_generate_image(prompt: str, aspect: str, count: int, model: str, key: str) -> list[str]:
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "n": clamp_int(count, 1, 1, 10),
+        "aspect_ratio": ASPECT_TO_XAI.get(aspect, "1:1"),
+        "response_format": "b64_json",
+    }
+    data = xai_request_json("/images/generations", key, payload, method="POST", timeout=240)
+    urls: list[str] = []
+    for item in data.get("data", []) or []:
+        if not isinstance(item, dict):
+            continue
+        b64 = item.get("b64_json")
+        if isinstance(b64, str) and b64.strip():
+            if b64.startswith("data:") and "," in b64:
+                b64 = b64.split(",", 1)[1]
+            try:
+                raw = base64.b64decode(b64, validate=True)
+            except (ValueError, binascii.Error) as exc:
+                raise RuntimeError("xAI returned image data that could not be decoded.") from exc
+            url, _, _ = save_output_bytes("xai_image", raw, ".jpg")
+            urls.append(url)
+            continue
+        remote_url = item.get("url")
+        if isinstance(remote_url, str) and remote_url.strip():
+            url, _, _ = download_url_to_output(remote_url, "xai_image", ".jpg")
+            urls.append(url)
+    if not urls:
+        raise RuntimeError("xAI returned no image data. Try a different prompt or model.")
+    return urls
+
+
+def xai_generate_video(prompt: str, aspect: str, seconds: object, model: str, key: str,
+                       start_image: object = "", on_progress=None) -> dict[str, Any]:
+    duration = clamp_int(seconds, 5, 1, 15)
+    payload: dict[str, Any] = {
+        "model": model,
+        "prompt": prompt,
+        "duration": duration,
+        "aspect_ratio": ASPECT_TO_XAI.get(aspect, "16:9"),
+        "resolution": "720p",
+    }
+    if isinstance(start_image, str) and start_image.strip():
+        decode_image_data_url(start_image)
+        payload["image"] = {"url": start_image}
+
+    started = xai_request_json("/videos/generations", key, payload, method="POST", timeout=120)
+    request_id = str(started.get("request_id") or "").strip()
+    if not request_id:
+        raise RuntimeError("xAI did not return a video request_id.")
+
+    deadline = now() + XAI_VIDEO_TIMEOUT
+    while now() < deadline:
+        data = xai_request_json(f"/videos/{urllib.parse.quote(request_id)}", key, timeout=120)
+        status = str(data.get("status") or "").lower()
+        progress = data.get("progress")
+        if on_progress:
+            on_progress(status or "running", progress)
+        if status == "done":
+            video = data.get("video") if isinstance(data.get("video"), dict) else {}
+            remote_url = str(video.get("url") or "").strip()
+            if not remote_url:
+                raise RuntimeError("xAI video finished without a video URL.")
+            mp4_url, mp4_path, _ = download_url_to_output(remote_url, "xai_video", ".mp4", timeout=600)
+            webm_url = transcode_mp4_path_to_webm(mp4_path)
+            return {"url": webm_url or mp4_url, "type": "video", "mp4Url": mp4_url}
+        if status in ("failed", "expired"):
+            err = data.get("error") if isinstance(data.get("error"), dict) else {}
+            message = err.get("message") or f"xAI video request {status}."
+            code = err.get("code")
+            raise RuntimeError(f"xAI video failed [{code}]: {message}" if code else str(message))
+        time.sleep(5)
+    raise TimeoutError("xAI video generation timed out.")
+
+
+# --------------------------------------------------------------------------- #
 # Job runners
 # --------------------------------------------------------------------------- #
 def make_job(kind: str) -> str:
@@ -708,6 +872,18 @@ def run_image_job(job_id: str, payload: dict[str, Any]) -> None:
                        meta={"engine": "gemini", "modelTitle": model})
             return
 
+        if engine == "xai":
+            model = str(payload.get("xaiImageModel") or settings.get("xaiImageModel") or DEFAULT_XAI_IMAGE_MODEL)
+            update_job(job_id, status="running", meta={"engine": "xai", "modelTitle": model})
+            key = xai_key()
+            if not key:
+                raise RuntimeError("No xAI API key saved. Add one in Settings.")
+            urls = xai_generate_image(prompt, aspect, count, model, key)[:count]
+            update_job(job_id, status="done",
+                       results=[{"url": u, "type": "image"} for u in urls],
+                       meta={"engine": "xai", "modelTitle": "Grok Imagine", "model": model})
+            return
+
         # local Z-Image Turbo
         width, height = ASPECT_TO_SIZE.get(aspect, (1024, 1024))
         graph = build_zimage_graph({
@@ -740,7 +916,29 @@ def run_video_job(job_id: str, payload: dict[str, Any]) -> None:
     model = str(payload.get("model") or "wan22_14b")
     aspect = str(payload.get("aspect") or "wide")
     base_w, base_h = ASPECT_TO_SIZE.get(aspect, (1280, 720))
+    settings = load_settings()
     try:
+        if model == "xai":
+            xai_model = str(payload.get("xaiVideoModel") or settings.get("xaiVideoModel") or DEFAULT_XAI_VIDEO_MODEL)
+            update_job(job_id, status="running",
+                       meta={"engine": "xai", "modelTitle": "Grok Imagine Video", "model": xai_model})
+            key = xai_key()
+            if not key:
+                raise RuntimeError("No xAI API key saved. Add one in Settings.")
+
+            def on_xai_progress(status: str, progress: object) -> None:
+                update_job(job_id, status="running",
+                           meta={"engine": "xai", "modelTitle": "Grok Imagine Video",
+                                 "model": xai_model, "xaiStatus": status, "progress": progress})
+
+            result = xai_generate_video(
+                prompt, aspect, payload.get("seconds"), xai_model, key,
+                payload.get("startImage"), on_progress=on_xai_progress,
+            )
+            update_job(job_id, status="done", results=[result],
+                       meta={"engine": "xai", "modelTitle": "Grok Imagine Video", "model": xai_model})
+            return
+
         common = {
             "prompt": prompt,
             "negative_prompt": payload.get("negativePrompt", DEFAULT_NEGATIVE_VIDEO),
@@ -813,6 +1011,24 @@ inp.close()
 """
 
 
+def transcode_mp4_path_to_webm(src_path: Path) -> str | None:
+    """Re-encode a local mp4 to VP9 webm via ComfyUI's PyAV environment."""
+    if not Path(COMFY_PYTHON).exists():
+        return None
+    name = f"video_{int(now())}_{uuid.uuid4().hex[:8]}.webm"
+    out_path = OUTPUTS_DIR / name
+    try:
+        result = subprocess.run(
+            [COMFY_PYTHON, "-c", _TRANSCODE_SRC, str(src_path), str(out_path)],
+            capture_output=True, timeout=300,
+        )
+        if result.returncode != 0 or not out_path.exists() or out_path.stat().st_size == 0:
+            return None
+        return output_url(name)
+    except Exception:
+        return None
+
+
 def transcode_entry_to_webm(entry: dict[str, Any]) -> str | None:
     """Fetch the mp4 ComfyUI produced and re-encode it to VP9 webm via ComfyUI's
     PyAV. Returns a /api/local-media URL, or None if transcoding isn't possible."""
@@ -827,18 +1043,10 @@ def transcode_entry_to_webm(entry: dict[str, Any]) -> str | None:
         mp4_bytes, _ = comfy_get_bytes(f"/view?{params}", timeout=120)
     except Exception:
         return None
-    name = f"video_{int(now())}_{uuid.uuid4().hex[:8]}.webm"
-    out_path = OUTPUTS_DIR / name
     tmp_mp4 = OUTPUTS_DIR / f".src_{uuid.uuid4().hex[:8]}.mp4"
     try:
         tmp_mp4.write_bytes(mp4_bytes)
-        result = subprocess.run(
-            [COMFY_PYTHON, "-c", _TRANSCODE_SRC, str(tmp_mp4), str(out_path)],
-            capture_output=True, timeout=300,
-        )
-        if result.returncode != 0 or not out_path.exists() or out_path.stat().st_size == 0:
-            return None
-        return f"/api/local-media?name={urllib.parse.quote(name)}"
+        return transcode_mp4_path_to_webm(tmp_mp4)
     except Exception:
         return None
     finally:
@@ -862,8 +1070,9 @@ CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
     ".mjs": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
     ".json": "application/json; charset=utf-8", ".svg": "image/svg+xml",
-    ".png": "image/png", ".jpg": "image/jpeg", ".ico": "image/x-icon",
-    ".webm": "video/webm", ".mp4": "video/mp4",
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".webp": "image/webp", ".gif": "image/gif", ".ico": "image/x-icon",
+    ".webm": "video/webm", ".mp4": "video/mp4", ".mov": "video/quicktime",
 }
 
 
@@ -965,14 +1174,19 @@ class Handler(BaseHTTPRequestHandler):
             "models": models,
             "geminiConfigured": bool(gemini_key()),
             "geminiModel": settings["geminiModel"],
+            "xaiConfigured": bool(xai_key()),
+            "xaiImageModel": settings["xaiImageModel"],
+            "xaiVideoModel": settings["xaiVideoModel"],
             "defaultImageEngine": settings["defaultImageEngine"],
         }
 
     def api_secrets(self) -> dict[str, Any]:
         secrets = load_secrets()
         out = {}
-        for provider in ("gemini",):
-            value = secrets.get(provider) or ("env" if os.environ.get("GEMINI_API_KEY") and provider == "gemini" else "")
+        env_keys = {"gemini": "GEMINI_API_KEY", "xai": "XAI_API_KEY"}
+        for provider in ("gemini", "xai"):
+            env_name = env_keys[provider]
+            value = secrets.get(provider) or ("env" if os.environ.get(env_name) else "")
             out[provider] = {
                 "configured": bool(value),
                 "hint": (f"…{value[-4:]}" if value and value != "env" else ("environment" if value == "env" else "")),
@@ -1035,7 +1249,11 @@ def main() -> None:
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     url = f"http://{args.host}:{args.port}"
     print(f"ImagineAI running at {url}")
-    print(f"  ComfyUI: {comfy_url()}   Gemini fallback: {'on' if gemini_key() else 'off (add a key in Settings)'}")
+    print(
+        f"  ComfyUI: {comfy_url()}   "
+        f"Gemini: {'on' if gemini_key() else 'off'}   "
+        f"xAI/Grok: {'on' if xai_key() else 'off'}"
+    )
     if args.open:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     try:

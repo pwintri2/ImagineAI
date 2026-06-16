@@ -38,6 +38,7 @@ function engineAvailable(engineId) {
   const { config } = getState();
   if (engineId === 'local') return !!(config.comfyReachable && config.models?.image?.zimage_turbo);
   if (engineId === 'gemini') return !!config.geminiConfigured;
+  if (engineId === 'xai') return !!config.xaiConfigured;
   return false;
 }
 
@@ -46,6 +47,7 @@ export function render() {
   const s = getState();
   const localOk = engineAvailable('local');
   const geminiOk = engineAvailable('gemini');
+  const xaiOk = engineAvailable('xai');
 
   section.innerHTML = `
     <div class="space-y-4">
@@ -69,6 +71,7 @@ export function render() {
           <div id="engineChips" class="flex gap-1.5">
             ${chip(`⚡ ${ENGINES.local.title}`, 'local', 'engine', s.imageEngine === 'local', !localOk)}
             ${chip(`☁ ${ENGINES.gemini.title}`, 'gemini', 'engine', s.imageEngine === 'gemini', !geminiOk)}
+            ${chip(`𝕏 ${ENGINES.xai.title}`, 'xai', 'engine', s.imageEngine === 'xai', !xaiOk)}
           </div>
         </div>
         <div class="space-y-1.5">
@@ -115,7 +118,8 @@ export function render() {
 
 function engineHint(s) {
   if (s.imageEngine === 'gemini') return `Cloud render via ${escapeHtml(s.config.geminiModel || 'Gemini')} · uses your Google API quota`;
-  if (!s.config.comfyReachable) return 'ComfyUI not detected — start it, or switch to the Gemini engine in Settings.';
+  if (s.imageEngine === 'xai') return `Cloud render via ${escapeHtml(s.config.xaiImageModel || 'Grok Imagine')} · uses your xAI quota`;
+  if (!s.config.comfyReachable) return 'ComfyUI not detected — start it, or switch to a cloud engine in Settings.';
   return 'Runs locally on your GPU · free';
 }
 

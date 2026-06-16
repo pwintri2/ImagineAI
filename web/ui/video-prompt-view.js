@@ -37,6 +37,7 @@ export function init() {
 
 function modelAvailable(id) {
   const { config } = getState();
+  if (id === 'xai') return !!config.xaiConfigured;
   return !!(config.comfyReachable && config.models?.video?.[id]);
 }
 
@@ -46,6 +47,7 @@ export function render() {
   const wan22Ok = modelAvailable('wan22_14b');
   const wanTi2vOk = modelAvailable('wan22_ti2v_5b');
   const wan21Ok = modelAvailable('wan21_1_3b');
+  const xaiOk = modelAvailable('xai');
   const selectedImage = s._draftVideoStartImage;
   const imageError = s._draftVideoStartImageError || '';
 
@@ -65,6 +67,7 @@ export function render() {
       <div class="space-y-1.5">
         <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Model</label>
         <div id="modelChips" class="flex flex-wrap gap-1.5">
+          ${chip(`𝕏 ${VIDEO_MODELS.xai.title}`, 'xai', 'model', s.videoModel === 'xai', !xaiOk)}
           ${chip(`✨ ${VIDEO_MODELS.wan22_14b.title}`, 'wan22_14b', 'model', s.videoModel === 'wan22_14b', !wan22Ok)}
           ${chip(`🎞 ${VIDEO_MODELS.wan22_ti2v_5b.title}`, 'wan22_ti2v_5b', 'model', s.videoModel === 'wan22_ti2v_5b', !wanTi2vOk)}
           ${chip(`🪶 ${VIDEO_MODELS.wan21_1_3b.title}`, 'wan21_1_3b', 'model', s.videoModel === 'wan21_1_3b', !wan21Ok)}
@@ -102,7 +105,7 @@ export function render() {
         <span id="videoBtnIcon">🎬</span><span id="videoBtnText">Create Video</span>
       </button>
 
-      <p class="text-center text-[11px] text-slate-600">${videoHint(s, wan22Ok || wanTi2vOk || wan21Ok)}</p>
+      <p class="text-center text-[11px] text-slate-600">${videoHint(s, wan22Ok || wanTi2vOk || wan21Ok || xaiOk)}</p>
     </div>
   `;
 
@@ -117,6 +120,10 @@ export function render() {
 }
 
 function videoHint(s, anyModel) {
+  if (s.videoModel === 'xai') {
+    if (!s.config.xaiConfigured) return 'Add an xAI key in Settings to generate Grok videos.';
+    return 'Grok Imagine runs in xAI cloud · supports text-to-video and start images.';
+  }
   if (!s.config.comfyReachable) return 'ComfyUI not detected — start it to generate video.';
   if (!anyModel) return 'No Wan video model found in ComfyUI.';
   return 'Text-to-video runs locally on your GPU · can take a few minutes.';
@@ -178,8 +185,10 @@ async function handleStartImageChange() {
     size: file.size,
   };
   s._draftVideoStartImageError = '';
-  if (s.videoModel !== 'wan22_ti2v_5b' && modelAvailable('wan22_ti2v_5b')) {
+  if (!['wan22_ti2v_5b', 'xai'].includes(s.videoModel) && modelAvailable('wan22_ti2v_5b')) {
     setState({ videoModel: 'wan22_ti2v_5b' });
+  } else if (!['wan22_ti2v_5b', 'xai'].includes(s.videoModel) && modelAvailable('xai')) {
+    setState({ videoModel: 'xai' });
   }
   render();
 }
@@ -194,7 +203,7 @@ function readFileAsDataURL(file) {
 }
 
 function startImageLabel(image) {
-  if (!image) return 'Optional. Add one to animate a still image with Wan 2.2 TI2V 5B.';
+  if (!image) return 'Optional. Add one to animate a still image with Wan 2.2 TI2V 5B or Grok Imagine.';
   return `Selected: ${image.name} · ${formatBytes(image.size)}`;
 }
 

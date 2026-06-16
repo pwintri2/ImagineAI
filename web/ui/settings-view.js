@@ -44,6 +44,7 @@ function render() {
   const s = getState();
   const c = s.config;
   const gem = secrets.providers?.gemini || {};
+  const xai = secrets.providers?.xai || {};
 
   const dot = (ok) => `<span class="w-2 h-2 rounded-full ${ok ? 'bg-emerald-400' : 'bg-slate-600'} inline-block"></span>`;
 
@@ -71,6 +72,10 @@ function render() {
           <span class="text-slate-400">${dot(c.geminiConfigured)} Gemini fallback</span>
           <span class="text-slate-500">${c.geminiConfigured ? 'key saved' : 'no key'}</span>
         </div>
+        <div class="flex items-center justify-between">
+          <span class="text-slate-400">${dot(c.xaiConfigured)} Grok Imagine</span>
+          <span class="text-slate-500">${c.xaiConfigured ? 'key saved' : 'no key'}</span>
+        </div>
       </div>
     </section>
 
@@ -92,6 +97,30 @@ function render() {
     </section>
 
     <section class="space-y-3">
+      <h3 class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">xAI API key (Grok image + video)</h3>
+      <p class="text-[11px] text-slate-500">Stored locally on this machine (data/secrets.json, chmod 600). Used for the Image tab's Grok engine and the Video tab's Grok Imagine model.</p>
+      <div class="flex gap-2">
+        <input id="xaiKeyInput" type="password" autocomplete="off" placeholder="${xai.configured ? 'Saved ' + escapeAttr(xai.hint || '') : 'xai-…'}"
+          class="flex-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30" />
+        <button id="saveXaiKey" type="button" class="px-3 py-2 rounded-xl bg-violet-500/20 hover:bg-violet-500/30 border border-violet-500/30 text-violet-300 text-xs font-medium transition">Save</button>
+      </div>
+      ${xai.configured ? `<button id="clearXaiKey" type="button" class="text-[11px] text-red-400/70 hover:text-red-400 transition">Remove saved key</button>` : ''}
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <div class="space-y-1.5">
+          <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Grok image model</label>
+          <input id="xaiImageModelInput" type="text" value="${escapeAttr(c.xaiImageModel || '')}" placeholder="grok-imagine-image-quality"
+            class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30" />
+        </div>
+        <div class="space-y-1.5">
+          <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Grok video model</label>
+          <input id="xaiVideoModelInput" type="text" value="${escapeAttr(c.xaiVideoModel || '')}" placeholder="grok-imagine-video"
+            class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30" />
+        </div>
+      </div>
+      <a href="https://console.x.ai/team/60586ab6-ba7f-4fcc-a2c8-1425021c6f1b/api-keys" target="_blank" rel="noopener" class="text-[11px] text-violet-400/80 hover:text-violet-300 transition inline-block">Open xAI API keys ↗</a>
+    </section>
+
+    <section class="space-y-3">
       <h3 class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">ComfyUI server</h3>
       <div class="flex gap-2">
         <input id="comfyUrlInput" type="url" value="${escapeAttr(c.comfyUrl || '')}" placeholder="http://127.0.0.1:8188"
@@ -108,10 +137,14 @@ function render() {
 
   document.getElementById('saveGeminiKey')?.addEventListener('click', handleSaveGeminiKey);
   document.getElementById('clearGeminiKey')?.addEventListener('click', handleClearGeminiKey);
+  document.getElementById('saveXaiKey')?.addEventListener('click', handleSaveXaiKey);
+  document.getElementById('clearXaiKey')?.addEventListener('click', handleClearXaiKey);
   document.getElementById('saveComfyUrl')?.addEventListener('click', handleSaveComfyUrl);
   document.getElementById('refreshConfig')?.addEventListener('click', refresh);
   document.getElementById('resetComfyUrl')?.addEventListener('click', handleResetComfyUrl);
   document.getElementById('geminiModelInput')?.addEventListener('change', handleSaveGeminiModel);
+  document.getElementById('xaiImageModelInput')?.addEventListener('change', handleSaveXaiImageModel);
+  document.getElementById('xaiVideoModelInput')?.addEventListener('change', handleSaveXaiVideoModel);
 }
 
 async function handleSaveGeminiKey() {
@@ -134,12 +167,52 @@ async function handleClearGeminiKey() {
   } catch (e) { showToast(e.message || 'Could not remove key', 'error'); }
 }
 
+async function handleSaveXaiKey() {
+  const input = document.getElementById('xaiKeyInput');
+  const key = input?.value?.trim();
+  if (!key) { showToast('Paste a key first', 'info'); return; }
+  try {
+    secrets = await saveSecret('xai', key);
+    showToast('xAI key saved', 'success');
+    if (input) input.value = '';
+    await refresh();
+  } catch (e) { showToast(e.message || 'Could not save key', 'error'); }
+}
+
+async function handleClearXaiKey() {
+  try {
+    secrets = await saveSecret('xai', '');
+    showToast('xAI key removed', 'info');
+    await refresh();
+  } catch (e) { showToast(e.message || 'Could not remove key', 'error'); }
+}
+
 async function handleSaveGeminiModel(e) {
   const model = e.target.value.trim();
   if (!model) return;
   try {
     await saveSettings({ geminiModel: model });
     showToast('Model saved', 'success');
+    await refresh();
+  } catch (err) { showToast(err.message || 'Could not save', 'error'); }
+}
+
+async function handleSaveXaiImageModel(e) {
+  const model = e.target.value.trim();
+  if (!model) return;
+  try {
+    await saveSettings({ xaiImageModel: model });
+    showToast('Grok image model saved', 'success');
+    await refresh();
+  } catch (err) { showToast(err.message || 'Could not save', 'error'); }
+}
+
+async function handleSaveXaiVideoModel(e) {
+  const model = e.target.value.trim();
+  if (!model) return;
+  try {
+    await saveSettings({ xaiVideoModel: model });
+    showToast('Grok video model saved', 'success');
     await refresh();
   } catch (err) { showToast(err.message || 'Could not save', 'error'); }
 }

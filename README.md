@@ -6,8 +6,8 @@ default. It serves a lightweight web UI from `server.py`, talks to your local
 ComfyUI install, and keeps settings, keys, and generated media on your machine.
 
 The current app can generate still images with Z-Image Turbo, make text-to-video
-clips with Wan 2.1 / Wan 2.2, and optionally fall back to Google Gemini for
-cloud image generation when your GPU is busy.
+clips with Wan 2.1 / Wan 2.2, and optionally use cloud providers when your GPU
+is busy: Google Gemini for images, and xAI Grok Imagine for images and videos.
 
 ## Highlights
 
@@ -15,6 +15,8 @@ cloud image generation when your GPU is busy.
 - Local video generation through Wan 2.2 14B, Wan 2.2 TI2V 5B, or Wan 2.1 1.3B.
 - Optional start-image upload for the Wan 2.2 TI2V flow.
 - Optional Gemini image fallback with a locally stored API key.
+- Optional xAI Grok Imagine image and video generation with a locally stored API
+  key.
 - Browser UI plus Tauri desktop packaging.
 - Local history, background jobs, media proxying, and ComfyUI model detection.
 - No third-party Python packages required for the server.
@@ -26,6 +28,7 @@ cloud image generation when your GPU is busy.
 - A running ComfyUI instance, expected at `http://127.0.0.1:8188` by default.
 - The ComfyUI model files used by the bundled Z-Image and Wan workflows.
 - Optional: a Gemini API key for the cloud image engine.
+- Optional: an xAI API key for Grok Imagine image and video generation.
 
 ## Quick Start
 
@@ -77,10 +80,12 @@ Open Settings in the app to configure:
 - Default image engine.
 - Gemini image model.
 - Gemini API key.
+- xAI image/video models.
+- xAI API key.
 
 Secrets are stored locally in `data/secrets.json` with restrictive permissions
 where supported. That file is ignored by git. You can also provide the Gemini
-key with `GEMINI_API_KEY`.
+key with `GEMINI_API_KEY`. You can provide the xAI key with `XAI_API_KEY`.
 
 ## Environment
 
@@ -89,15 +94,20 @@ key with `GEMINI_API_KEY`.
 | `COMFYUI_URL` | `http://127.0.0.1:8188` | ComfyUI base URL |
 | `GEMINI_API_KEY` | empty | Gemini key for cloud image generation |
 | `GEMINI_IMAGE_MODEL` | `gemini-2.5-flash-image` | Gemini image model |
+| `XAI_API_KEY` | empty | xAI key for Grok Imagine image/video |
+| `XAI_IMAGE_MODEL` | `grok-imagine-image-quality` | xAI image model |
+| `XAI_VIDEO_MODEL` | `grok-imagine-video` | xAI video model |
+| `XAI_BASE_URL` | `https://api.x.ai/v1` | xAI API base URL |
 | `IMAGINEAI_HOST` | `127.0.0.1` | HTTP bind host |
 | `IMAGINEAI_PORT` | `8799` | HTTP port |
 | `IMAGINEAI_DATA_DIR` | `./data` | Local settings, secrets, and outputs |
+| `IMAGINEAI_XAI_VIDEO_TIMEOUT` | `1200` | xAI video polling timeout in seconds |
 
 ## Project Layout
 
 ```text
 imagineai/
-├── server.py              # HTTP server, jobs, ComfyUI bridge, cloud fallback
+├── server.py              # HTTP server, jobs, ComfyUI bridge, cloud fallbacks
 ├── start.sh               # local launcher
 ├── web/                   # browser UI
 │   ├── services/          # API clients and generation wrappers
