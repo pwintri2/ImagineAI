@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=ImagineAI
+GenericName=AI Image & Video Studio
+Comment=Local Grok-style image & video studio (ComfyUI + Gemini)
+Exec=/home/pwintri2/imagineai/scripts/launch-desktop.sh
+Icon=/home/pwintri2/imagineai/src-tauri/icons/128x128@2x.png
+Terminal=false
+Categories=Graphics;Photography;
+Keywords=AI;Image;Video;ComfyUI;Gemini;Generator;Z-Image;Wan;
+StartupNotify=true
+StartupWMClass=imagineai

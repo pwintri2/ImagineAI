@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ImagineAI · Local Studio</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
+          colors: {
+            surface: { 50: '#faf5ff', 100: '#f3e8ff', 800: '#1e1033', 900: '#130a1e', 950: '#0b0612' },
+          },
+        },
+      },
+    };
+  </script>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="min-h-screen bg-surface-950 text-slate-100 antialiased">
+  <div id="app" class="mx-auto flex min-h-screen max-w-3xl flex-col px-4 py-6 sm:py-10">
+
+    <!-- Header -->
+    <header class="flex items-center justify-between mb-6 shrink-0">
+      <div class="flex items-center gap-3">
+        <div class="logo-icon w-10 h-10 rounded-xl flex items-center justify-center text-xl font-bold shadow-lg shadow-violet-500/20">✦</div>
+        <div>
+          <h1 class="text-xl font-bold text-white tracking-tight">ImagineAI</h1>
+          <p class="text-[11px] text-slate-500">Local ComfyUI image &amp; video studio</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <div id="engineStatus" class="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-white/10 bg-white/5 text-[11px] text-slate-400">
+          <span id="statusDot" class="w-2 h-2 rounded-full bg-slate-500"></span>
+          <span id="statusLabel">checking…</span>
+        </div>
+        <button id="settingsToggle" type="button" class="p-2.5 rounded-xl border border-white/10 bg-white/5 hover:border-violet-500/30 hover:bg-white/10 transition-all" aria-label="Settings">
+          <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </button>
+        <button id="historyToggle" type="button" class="p-2.5 rounded-xl border border-white/10 bg-white/5 hover:border-violet-500/30 hover:bg-white/10 transition-all" aria-label="History">
+          <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Tab Bar -->
+    <nav id="tabBar" class="flex gap-1 mb-6 shrink-0 bg-white/[0.03] rounded-2xl p-1 border border-white/5" role="tablist">
+      <button type="button" data-tab="image" role="tab" aria-selected="true"
+        class="tab-active flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all border">
+        <span>🎨</span><span>Image</span>
+      </button>
+      <button type="button" data-tab="video" role="tab" aria-selected="false"
+        class="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all border border-transparent text-slate-400">
+        <span>🎬</span><span>Video</span>
+      </button>
+    </nav>
+
+    <!-- IMAGE -->
+    <div id="image-section">
+      <section class="mb-8 text-center">
+        <p class="text-3xl sm:text-4xl font-bold text-white leading-tight">Turn your words into images</p>
+        <p class="mt-3 text-sm text-slate-400 max-w-md mx-auto">Runs on your local Z-Image Turbo through ComfyUI — or fall back to Gemini in the cloud.</p>
+      </section>
+      <section id="prompt-section" class="mb-6"></section>
+      <section id="gallery" class="mb-12 flex-1"></section>
+    </div>
+
+    <!-- VIDEO -->
+    <div id="video-section" class="hidden">
+      <section class="mb-8 text-center">
+        <p class="text-3xl sm:text-4xl font-bold text-white leading-tight">Describe a scene, get a video</p>
+        <p class="mt-3 text-sm text-slate-400 max-w-md mx-auto">Local text-to-video with Wan 2.2 14B or Wan 2.1 1.3B. This runs on your GPU and can take a few minutes.</p>
+      </section>
+      <section id="video-prompt-section" class="mb-6"></section>
+      <section id="video-gallery" class="mb-12 flex-1"></section>
+    </div>
+
+    <footer class="text-center text-[11px] text-slate-600 mt-auto pt-6 pb-2">
+      <span>Local-first · Images &amp; video are AI-generated on your own machine</span>
+    </footer>
+  </div>
+
+  <!-- History Slide-over -->
+  <aside id="history-panel" class="hidden fixed inset-y-0 right-0 z-50 w-full sm:w-96">
+    <div class="absolute inset-0 bg-black/60" id="historyOverlay"></div>
+    <div class="relative h-full flex flex-col bg-surface-900/95 backdrop-blur-xl border-l border-white/10">
+      <div class="flex items-center justify-between px-5 py-4 border-b border-white/10 shrink-0">
+        <h2 class="text-sm font-semibold text-white">History</h2>
+        <button id="closeHistoryBtn" type="button" class="p-1.5 rounded-lg hover:bg-white/10 transition" aria-label="Close">
+          <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div id="historyTabs" class="flex gap-1 px-5 py-3 border-b border-white/5 shrink-0">
+        <button type="button" data-history-tab="images" class="tab-active flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all border"><span>🖼️</span><span>Images</span></button>
+        <button type="button" data-history-tab="videos" class="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all border border-transparent text-slate-400"><span>🎬</span><span>Videos</span></button>
+      </div>
+      <div class="flex items-center justify-between px-5 py-3 border-b border-white/5 shrink-0">
+        <p id="historyCount" class="text-[11px] text-slate-500"></p>
+        <button id="clearHistoryBtn" type="button" class="text-[11px] text-red-400/70 hover:text-red-400 transition">Clear all</button>
+      </div>
+      <div id="historyList" class="flex-1 overflow-y-auto px-4 py-3 space-y-3"></div>
+    </div>
+  </aside>
+
+  <!-- Settings Slide-over -->
+  <aside id="settings-panel" class="hidden fixed inset-y-0 right-0 z-50 w-full sm:w-96">
+    <div class="absolute inset-0 bg-black/60" id="settingsOverlay"></div>
+    <div class="relative h-full flex flex-col bg-surface-900/95 backdrop-blur-xl border-l border-white/10">
+      <div class="flex items-center justify-between px-5 py-4 border-b border-white/10 shrink-0">
+        <h2 class="text-sm font-semibold text-white">Settings</h2>
+        <button id="closeSettingsBtn" type="button" class="p-1.5 rounded-lg hover:bg-white/10 transition" aria-label="Close">
+          <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div id="settingsBody" class="flex-1 overflow-y-auto px-5 py-4 space-y-6"></div>
+    </div>
+  </aside>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>

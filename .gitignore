@@ -1,0 +1,14 @@
+# Local secrets and generated media — never commit these
+data/secrets.json
+data/settings.json
+data/outputs/
+__pycache__/
+*.pyc
+.DS_Store
+
+# Desktop build artifacts
+src-tauri/target/
+src-tauri/gen/
+desktop-dist/
+node_modules/
+icon-source.png

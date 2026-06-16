@@ -1,0 +1,50 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "ImagineAI",
+  "version": "1.0.0",
+  "identifier": "ai.wintrip.ImagineAI",
+  "build": {
+    "beforeDevCommand": "",
+    "beforeBuildCommand": "sh scripts/prepare-tauri-assets.sh",
+    "devUrl": "http://127.0.0.1:8799",
+    "frontendDist": "../desktop-dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "ImagineAI",
+        "width": 1180,
+        "height": 860,
+        "minWidth": 760,
+        "minHeight": 620,
+        "url": "http://127.0.0.1:8799/?v=1.0.0"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["deb"],
+    "category": "Graphics and Design",
+    "shortDescription": "Local Grok-style image & video studio for ComfyUI",
+    "longDescription": "ImagineAI is a local-first desktop studio that generates images with ComfyUI's Z-Image Turbo and text-to-video with Wan 2.1 / Wan 2.2, with an optional Google Gemini cloud image fallback.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": [
+      "../server.py",
+      "../web"
+    ],
+    "linux": {
+      "deb": {
+        "depends": ["python3"]
+      }
+    }
+  }
+}

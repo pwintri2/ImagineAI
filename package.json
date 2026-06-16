@@ -1,0 +1,15 @@
+{
+  "name": "imagineai",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Local Grok-style image & video studio for ComfyUI",
+  "license": "MIT",
+  "scripts": {
+    "tauri": "tauri",
+    "desktop:dev": "tauri dev",
+    "desktop:build": "tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0"
+  }
+}
