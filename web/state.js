@@ -5,7 +5,7 @@ const VIDEO_HISTORY_KEY = 'imagineai_video_history';
 const PREFS_KEY = 'imagineai_prefs';
 
 const defaultPrefs = {
-  imageEngine: 'local',   // 'local' | 'gemini' | 'xai'
+  imageEngine: 'local',   // 'local' | 'gemini' | 'xai' | 'sdxl'
   aspectRatio: 'square',
   imageCount: 1,
   steps: 8,
@@ -24,6 +24,14 @@ const state = {
     xaiConfigured: false,
     xaiImageModel: '',
     xaiVideoModel: '',
+    sdxlConfigured: false,
+    stabilityConfigured: false,
+    stabilityImageModel: '',
+    stabilityProvider: '',
+    modelslabConfigured: false,
+    modelslabProvider: '',
+    modelslabImageModel: '',
+    modelslabVideoModel: '',
     comfyUrl: '',
   },
   // user preferences (persisted)

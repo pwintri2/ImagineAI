@@ -39,6 +39,7 @@ function engineAvailable(engineId) {
   if (engineId === 'local') return !!(config.comfyReachable && config.models?.image?.zimage_turbo);
   if (engineId === 'gemini') return !!config.geminiConfigured;
   if (engineId === 'xai') return !!config.xaiConfigured;
+  if (engineId === 'sdxl') return !!(config.sdxlConfigured || config.stabilityConfigured);
   return false;
 }
 
@@ -48,6 +49,7 @@ export function render() {
   const localOk = engineAvailable('local');
   const geminiOk = engineAvailable('gemini');
   const xaiOk = engineAvailable('xai');
+  const sdxlOk = engineAvailable('sdxl');
 
   section.innerHTML = `
     <div class="space-y-4">
@@ -68,10 +70,11 @@ export function render() {
       <div class="flex flex-wrap items-end gap-4">
         <div class="space-y-1.5">
           <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Engine</label>
-          <div id="engineChips" class="flex gap-1.5">
+          <div id="engineChips" class="flex flex-wrap gap-1.5">
             ${chip(`⚡ ${ENGINES.local.title}`, 'local', 'engine', s.imageEngine === 'local', !localOk)}
             ${chip(`☁ ${ENGINES.gemini.title}`, 'gemini', 'engine', s.imageEngine === 'gemini', !geminiOk)}
             ${chip(`𝕏 ${ENGINES.xai.title}`, 'xai', 'engine', s.imageEngine === 'xai', !xaiOk)}
+            ${chip(`▣ ${ENGINES.sdxl.title}`, 'sdxl', 'engine', s.imageEngine === 'sdxl', !sdxlOk)}
           </div>
         </div>
         <div class="space-y-1.5">
@@ -119,6 +122,7 @@ export function render() {
 function engineHint(s) {
   if (s.imageEngine === 'gemini') return `Cloud render via ${escapeHtml(s.config.geminiModel || 'Gemini')} · uses your Google API quota`;
   if (s.imageEngine === 'xai') return `Cloud render via ${escapeHtml(s.config.xaiImageModel || 'Grok Imagine')} · uses your xAI quota`;
+  if (s.imageEngine === 'sdxl') return `Cloud render via ${escapeHtml(s.config.modelslabImageModel || 'sdxl')} · uses your ModelsLab quota`;
   if (!s.config.comfyReachable) return 'ComfyUI not detected — start it, or switch to a cloud engine in Settings.';
   return 'Runs locally on your GPU · free';
 }

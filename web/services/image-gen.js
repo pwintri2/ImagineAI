@@ -4,6 +4,7 @@ export const ENGINES = {
   local: { id: 'local', title: 'Z-Image Turbo', subtitle: 'Local · ComfyUI', note: 'Fast local GPU render' },
   gemini: { id: 'gemini', title: 'Gemini', subtitle: 'Cloud · Google', note: 'Needs an API key' },
   xai: { id: 'xai', title: 'Grok Imagine', subtitle: 'Cloud · xAI', note: 'Needs an xAI API key' },
+  sdxl: { id: 'sdxl', title: 'ModelsLab SDXL', subtitle: 'Cloud · ModelsLab', note: 'Needs a ModelsLab key' },
 };
 
 /**

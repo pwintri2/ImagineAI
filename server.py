@@ -47,6 +47,11 @@ GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
 DEFAULT_XAI_IMAGE_MODEL = os.environ.get("XAI_IMAGE_MODEL", "grok-imagine-image-quality")
 DEFAULT_XAI_VIDEO_MODEL = os.environ.get("XAI_VIDEO_MODEL", "grok-imagine-video")
 XAI_BASE = os.environ.get("XAI_BASE_URL", "https://api.x.ai/v1").rstrip("/")
+DEFAULT_STABILITY_IMAGE_MODEL = os.environ.get("STABILITY_IMAGE_MODEL", "core")
+STABILITY_BASE = os.environ.get("STABILITY_BASE_URL", "https://api.stability.ai").rstrip("/")
+DEFAULT_MODELSLAB_IMAGE_MODEL = os.environ.get("MODELSLAB_IMAGE_MODEL", "sdxl")
+DEFAULT_MODELSLAB_VIDEO_MODEL = os.environ.get("MODELSLAB_VIDEO_MODEL", "wan2.2")
+MODELSLAB_BASE = os.environ.get("MODELSLAB_BASE_URL", "https://modelslab.com").rstrip("/")
 
 # ComfyUI's Python (has PyAV) — used to transcode H.264 mp4 -> VP9 webm so the
 # Linux webkit2gtk webview, which usually lacks an H.264 decoder, can play video
@@ -66,6 +71,11 @@ JOBS: dict[str, dict[str, Any]] = {}
 JOBS_LOCK = threading.Lock()
 SETTINGS_LOCK = threading.Lock()
 SECRETS_LOCK = threading.Lock()
+
+KNOWN_SECRET_PROVIDERS = ("gemini", "xai")
+SECRET_ENV_KEYS = {"gemini": "GEMINI_API_KEY", "xai": "XAI_API_KEY"}
+STABILITY_SECRET_PROVIDERS = ("stability", "stability-ai")
+MODELSLAB_SECRET_PROVIDERS = ("modelslab", "models-lab", "stable-diffusion-api", "sdxl")
 
 DEFAULT_NEGATIVE_IMAGE = ""
 DEFAULT_NEGATIVE_VIDEO = (
@@ -99,6 +109,27 @@ ASPECT_TO_GEMINI = {
     "tall": "9:16",
 }
 ASPECT_TO_XAI = ASPECT_TO_GEMINI
+ASPECT_TO_STABILITY = {
+    "square": "1:1",
+    "landscape": "3:2",
+    "portrait": "2:3",
+    "wide": "16:9",
+    "tall": "9:16",
+}
+ASPECT_TO_MODELSLAB_IMAGE_SIZE = {
+    "square": (768, 768),
+    "landscape": (1024, 768),
+    "portrait": (768, 1024),
+    "wide": (1024, 576),
+    "tall": (576, 1024),
+}
+ASPECT_TO_MODELSLAB_VIDEO_SIZE = {
+    "square": (512, 512),
+    "landscape": (512, 384),
+    "portrait": (384, 512),
+    "wide": (512, 288),
+    "tall": (288, 512),
+}
 
 
 # --------------------------------------------------------------------------- #
@@ -145,6 +176,9 @@ def load_settings() -> dict[str, Any]:
         "geminiModel": DEFAULT_GEMINI_MODEL,
         "xaiImageModel": DEFAULT_XAI_IMAGE_MODEL,
         "xaiVideoModel": DEFAULT_XAI_VIDEO_MODEL,
+        "stabilityImageModel": DEFAULT_STABILITY_IMAGE_MODEL,
+        "modelslabImageModel": DEFAULT_MODELSLAB_IMAGE_MODEL,
+        "modelslabVideoModel": DEFAULT_MODELSLAB_VIDEO_MODEL,
         "defaultImageEngine": "local",
     }
     allowed = set(defaults)
@@ -169,7 +203,8 @@ def valid_http_url(url: str) -> bool:
 
 def save_settings(patch: dict[str, Any]) -> dict[str, Any]:
     current = load_settings()
-    for key in ("comfyUrl", "geminiModel", "xaiImageModel", "xaiVideoModel", "defaultImageEngine"):
+    for key in ("comfyUrl", "geminiModel", "xaiImageModel", "xaiVideoModel", "stabilityImageModel",
+                "modelslabImageModel", "modelslabVideoModel", "defaultImageEngine"):
         if key in patch and isinstance(patch[key], str) and patch[key].strip():
             value = patch[key].strip()
             if key == "comfyUrl":
@@ -199,8 +234,27 @@ def load_secrets() -> dict[str, str]:
     return {}
 
 
+def normalize_secret_provider(provider: str) -> str:
+    normalized = re.sub(r"\s+", "-", provider.strip().lower())
+    normalized = re.sub(r"[^a-z0-9_.:-]+", "-", normalized).strip("-._:")
+    if not normalized:
+        raise ValueError("Provider name is required.")
+    if len(normalized) > 64:
+        raise ValueError("Provider name is too long.")
+    return normalized
+
+
+def secret_status(value: str, source: str) -> dict[str, str | bool]:
+    return {
+        "configured": bool(value),
+        "hint": (f"…{value[-4:]}" if value and source == "file" else ("environment" if value else "")),
+        "source": source if value else "",
+    }
+
+
 def save_secret(provider: str, key: str) -> None:
-    provider = provider.strip().lower()
+    provider = normalize_secret_provider(provider)
+    key = key.strip()
     with SECRETS_LOCK:
         ensure_dirs()
         data = {}
@@ -211,8 +265,8 @@ def save_secret(provider: str, key: str) -> None:
                 data = {}
         if not isinstance(data, dict):
             data = {}
-        if key.strip():
-            data[provider] = key.strip()
+        if key:
+            data[provider] = key
         else:
             data.pop(provider, None)
         SECRETS_FILE.write_text(json.dumps(data, indent=2), "utf-8")
@@ -228,6 +282,22 @@ def gemini_key() -> str:
 
 def xai_key() -> str:
     return load_secrets().get("xai") or os.environ.get("XAI_API_KEY", "")
+
+
+def stability_key() -> tuple[str, str]:
+    secrets = load_secrets()
+    for provider in STABILITY_SECRET_PROVIDERS:
+        if secrets.get(provider):
+            return secrets[provider], provider
+    return os.environ.get("STABILITY_API_KEY", ""), "env"
+
+
+def modelslab_key() -> tuple[str, str]:
+    secrets = load_secrets()
+    for provider in MODELSLAB_SECRET_PROVIDERS:
+        if secrets.get(provider):
+            return secrets[provider], provider
+    return os.environ.get("MODELSLAB_API_KEY", ""), "env"
 
 
 # --------------------------------------------------------------------------- #
@@ -642,9 +712,18 @@ def save_output_bytes(prefix: str, raw: bytes, ext: str) -> tuple[str, Path, str
 def download_url_to_output(url: str, prefix: str, fallback_ext: str,
                            timeout: float = 240) -> tuple[str, Path, str]:
     req = urllib.request.Request(url)
-    with urllib.request.urlopen(req, timeout=timeout) as response:
-        raw = response.read()
-        ext = media_ext_from_content_type(response.headers.get("Content-Type", ""), fallback_ext)
+    req.add_header("User-Agent", "ImagineAI/1.0")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            raw = response.read()
+            ext = media_ext_from_content_type(response.headers.get("Content-Type", ""), fallback_ext)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 403:
+            raise RuntimeError(
+                "The provider returned a media URL that is not downloadable yet. "
+                "Please retry; if it repeats, the provider may still be processing the file."
+            ) from exc
+        raise
     return save_output_bytes(prefix, raw, ext)
 
 
@@ -836,6 +915,321 @@ def xai_generate_video(prompt: str, aspect: str, seconds: object, model: str, ke
 
 
 # --------------------------------------------------------------------------- #
+# Stability / SDXL-compatible cloud image generation
+# --------------------------------------------------------------------------- #
+def multipart_form_data(fields: dict[str, object]) -> tuple[bytes, str]:
+    boundary = f"----ImagineAI{uuid.uuid4().hex}"
+    chunks: list[bytes] = []
+    for name, value in fields.items():
+        if value is None or value == "":
+            continue
+        chunks.append(f"--{boundary}\r\n".encode("utf-8"))
+        chunks.append(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode("utf-8"))
+        chunks.append(str(value).encode("utf-8"))
+        chunks.append(b"\r\n")
+    chunks.append(f"--{boundary}--\r\n".encode("utf-8"))
+    return b"".join(chunks), f"multipart/form-data; boundary={boundary}"
+
+
+def stability_endpoint(model: str) -> tuple[str, str]:
+    normalized = model.strip().lower().replace("_", "-") or "core"
+    aliases = {
+        "stable-image-core": "core",
+        "stable-core": "core",
+        "sdxl": "core",
+        "stable-diffusion-xl": "core",
+        "stable-image-ultra": "ultra",
+        "sd3": "sd3",
+        "sd3.5": "sd3",
+        "stable-diffusion-3.5": "sd3",
+        "stable-diffusion-3": "sd3",
+    }
+    normalized = aliases.get(normalized, normalized)
+    if normalized not in {"core", "sd3", "ultra"}:
+        normalized = "core"
+    titles = {
+        "core": "Stable Image Core",
+        "sd3": "Stable Diffusion 3.5",
+        "ultra": "Stable Image Ultra",
+    }
+    return f"/v2beta/stable-image/generate/{normalized}", titles[normalized]
+
+
+def stability_request_image(path: str, key: str, fields: dict[str, object], timeout: float = 240) -> bytes:
+    body, content_type = multipart_form_data(fields)
+    req = urllib.request.Request(f"{STABILITY_BASE}{path}", data=body, method="POST")
+    token = key.strip()
+    if token.lower().startswith("bearer "):
+        token = token.split(None, 1)[1].strip()
+    req.add_header("Authorization", f"Bearer {token}")
+    req.add_header("Accept", "image/*")
+    req.add_header("Content-Type", content_type)
+    req.add_header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 ImagineAI/1.0")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            finish = response.headers.get("finish-reason", "")
+            if finish and finish.upper() != "SUCCESS":
+                raise RuntimeError(f"Stability finished with {finish}.")
+            return response.read()
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")
+        message = detail[:500]
+        try:
+            parsed = json.loads(detail)
+            errors = parsed.get("errors") if isinstance(parsed, dict) else None
+            if isinstance(errors, list) and errors:
+                message = "; ".join(str(e) for e in errors[:3])
+            elif isinstance(parsed, dict) and parsed.get("message"):
+                message = str(parsed["message"])
+        except (json.JSONDecodeError, TypeError):
+            if "<html" in detail.lower() or "<!doctype html" in detail.lower():
+                message = (
+                    "Stability returned an HTML block page. "
+                    "Restart ImagineAI so the updated request headers are used, then try again."
+                )
+        if exc.code == 401:
+            message = (
+                "Stability rejected the API key. Use a Stability Platform API key from "
+                "https://platform.stability.ai/account/keys, not a model name or another provider's SDXL key."
+            )
+        raise RuntimeError(f"Stability API error {exc.code}: {message}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Could not reach Stability API: {exc.reason}") from exc
+
+
+def stability_generate_image(prompt: str, aspect: str, count: int, model: str, key: str) -> tuple[list[str], str]:
+    path, title = stability_endpoint(model)
+    fields = {
+        "prompt": prompt,
+        "aspect_ratio": ASPECT_TO_STABILITY.get(aspect, "1:1"),
+        "output_format": "png",
+    }
+    urls: list[str] = []
+    for _ in range(clamp_int(count, 1, 1, 4)):
+        raw = stability_request_image(path, key, fields)
+        url, _, _ = save_output_bytes("stability_image", raw, ".png")
+        urls.append(url)
+    return urls, title
+
+
+# --------------------------------------------------------------------------- #
+# ModelsLab image + video generation
+# --------------------------------------------------------------------------- #
+class ModelsLabHTTPError(RuntimeError):
+    def __init__(self, code: int, message: str) -> None:
+        super().__init__(f"ModelsLab API error {code}: {message}")
+        self.code = code
+        self.message = message
+
+
+def modelslab_request_json(path: str, payload: dict[str, Any], timeout: float = 120) -> dict[str, Any]:
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(f"{MODELSLAB_BASE}{path}", data=body, method="POST")
+    req.add_header("Content-Type", "application/json")
+    req.add_header("User-Agent", "ImagineAI/1.0")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8") or "{}")
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")
+        message = detail[:500]
+        try:
+            parsed = json.loads(detail)
+            if isinstance(parsed, dict):
+                message = str(parsed.get("message") or parsed.get("error") or parsed.get("errors") or message)
+        except (json.JSONDecodeError, TypeError):
+            pass
+        if exc.code == 403 and message.lower() in ("forbidden", "403 forbidden"):
+            message = "Feature not available on your current ModelsLab plan."
+        raise ModelsLabHTTPError(exc.code, message) from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Could not reach ModelsLab API: {exc.reason}") from exc
+
+
+def modelslab_error(data: dict[str, Any]) -> str:
+    message = data.get("message") or data.get("error") or data.get("tip") or "ModelsLab request failed."
+    if isinstance(message, list):
+        message = "; ".join(str(item) for item in message)
+    return str(message)
+
+
+def modelslab_plan_error(feature: str) -> RuntimeError:
+    return RuntimeError(
+        f"ModelsLab says {feature} is not available on your current plan. "
+        "Try the ModelsLab dashboard/playground with the same key, or upgrade/enable that feature."
+    )
+
+
+def modelslab_extract_urls(data: dict[str, Any]) -> list[str]:
+    urls: list[str] = []
+    for key in ("output", "proxy_links"):
+        values = data.get(key)
+        if isinstance(values, list):
+            urls.extend(str(v).strip() for v in values if str(v).strip())
+    return urls
+
+
+def modelslab_fetch_image(request_id: object, key: str) -> dict[str, Any]:
+    return modelslab_request_json("/api/v6/images/fetch", {"key": key, "request_id": str(request_id)}, timeout=120)
+
+
+def modelslab_fetch_realtime_image(request_id: object, key: str) -> dict[str, Any]:
+    return modelslab_request_json(f"/api/v6/realtime/fetch/{urllib.parse.quote(str(request_id))}", {"key": key}, timeout=120)
+
+
+def modelslab_wait_for_image(data: dict[str, Any], key: str, realtime: bool = False) -> dict[str, Any]:
+    status = str(data.get("status") or "").lower()
+    if status == "success" and modelslab_extract_urls(data):
+        return data
+    if status in ("error", "failed", "failure"):
+        raise RuntimeError(modelslab_error(data))
+    request_id = data.get("id") or data.get("request_id")
+    if not request_id:
+        raise RuntimeError(modelslab_error(data))
+    deadline = now() + COMFY_IMAGE_TIMEOUT
+    while now() < deadline:
+        time.sleep(4)
+        fetched = modelslab_fetch_realtime_image(request_id, key) if realtime else modelslab_fetch_image(request_id, key)
+        status = str(fetched.get("status") or "").lower()
+        if status == "success" and modelslab_extract_urls(fetched):
+            return fetched
+        if status in ("error", "failed", "failure"):
+            raise RuntimeError(modelslab_error(fetched))
+    raise TimeoutError("ModelsLab image generation timed out.")
+
+
+def modelslab_generate_image(prompt: str, aspect: str, count: int, model: str, key: str) -> tuple[list[str], str]:
+    width, height = ASPECT_TO_MODELSLAB_IMAGE_SIZE.get(aspect, (768, 768))
+    model_id = model or DEFAULT_MODELSLAB_IMAGE_MODEL
+    requested = clamp_int(count, 1, 1, 4)
+
+    def download_results(data: dict[str, Any], prefix: str) -> list[str]:
+        urls: list[str] = []
+        for remote_url in modelslab_extract_urls(data)[:requested]:
+            url, _, _ = download_url_to_output(remote_url, prefix, ".png", timeout=300)
+            urls.append(url)
+        if not urls:
+            raise RuntimeError("ModelsLab returned no image URL.")
+        return urls
+
+    def realtime_image() -> tuple[list[str], str]:
+        rt_width, rt_height = ASPECT_TO_MODELSLAB_VIDEO_SIZE.get(aspect, (512, 512))
+        rt_payload = {
+            "key": key,
+            "prompt": prompt,
+            "negative_prompt": DEFAULT_NEGATIVE_IMAGE,
+            "width": rt_width,
+            "height": rt_height,
+            "samples": requested,
+            "safety_checker": False,
+            "seed": None,
+            "instant_response": False,
+            "base64": False,
+            "webhook": None,
+            "track_id": None,
+        }
+        rt_data = modelslab_wait_for_image(
+            modelslab_request_json("/api/v6/realtime/text2img", rt_payload, timeout=240),
+            key,
+            realtime=True,
+        )
+        return download_results(rt_data, "modelslab_realtime_image"), "realtime"
+
+    if model_id.strip().lower() in ("realtime", "fast", "real-time"):
+        return realtime_image()
+
+    payload = {
+        "key": key,
+        "prompt": prompt,
+        "model_id": model_id,
+        "negative_prompt": DEFAULT_NEGATIVE_IMAGE,
+        "width": width,
+        "height": height,
+        "samples": requested,
+        "num_inference_steps": 25,
+        "guidance_scale": 7.5,
+        "safety_checker": False,
+        "base64": False,
+        "temp": False,
+        "webhook": None,
+        "track_id": None,
+    }
+    try:
+        data = modelslab_wait_for_image(
+            modelslab_request_json("/api/v6/images/text2img", payload, timeout=240),
+            key,
+        )
+        return download_results(data, "modelslab_image"), model_id
+    except ModelsLabHTTPError as exc:
+        if exc.code != 403:
+            raise
+        urls, fallback = realtime_image()
+        return urls, f"{fallback} (fallback from {model_id})"
+
+
+def modelslab_fetch_video(request_id: object, key: str) -> dict[str, Any]:
+    return modelslab_request_json(f"/api/v6/video/fetch/{urllib.parse.quote(str(request_id))}", {"key": key}, timeout=120)
+
+
+def modelslab_generate_video(prompt: str, aspect: str, seconds: object, model: str, key: str,
+                             on_progress=None) -> dict[str, Any]:
+    width, height = ASPECT_TO_MODELSLAB_VIDEO_SIZE.get(aspect, (512, 512))
+    duration = clamp_int(seconds, 2, 1, 5)
+    fps = 15
+    frames = max(8, min(25, duration * fps))
+    payload = {
+        "key": key,
+        "model_id": model or DEFAULT_MODELSLAB_VIDEO_MODEL,
+        "prompt": prompt,
+        "negative_prompt": DEFAULT_NEGATIVE_VIDEO,
+        "height": height,
+        "width": width,
+        "num_frames": frames,
+        "num_inference_steps": 20,
+        "guidance_scale": 7,
+        "fps": fps,
+        "output_type": "mp4",
+        "instant_response": False,
+        "temp": False,
+        "webhook": None,
+        "track_id": None,
+    }
+    try:
+        data = modelslab_request_json("/api/v6/video/text2video", payload, timeout=240)
+    except ModelsLabHTTPError as exc:
+        if exc.code == 403:
+            raise modelslab_plan_error("text-to-video") from exc
+        raise
+    status = str(data.get("status") or "").lower()
+    if status == "success" and modelslab_extract_urls(data):
+        remote_url = modelslab_extract_urls(data)[0]
+    else:
+        if status in ("error", "failed", "failure"):
+            raise RuntimeError(modelslab_error(data))
+        request_id = data.get("id") or data.get("request_id")
+        if not request_id:
+            raise RuntimeError(modelslab_error(data))
+        deadline = now() + XAI_VIDEO_TIMEOUT
+        remote_url = ""
+        while now() < deadline:
+            if on_progress:
+                on_progress("processing", data.get("eta"))
+            time.sleep(5)
+            data = modelslab_fetch_video(request_id, key)
+            status = str(data.get("status") or "").lower()
+            if status == "success" and modelslab_extract_urls(data):
+                remote_url = modelslab_extract_urls(data)[0]
+                break
+            if status in ("error", "failed", "failure"):
+                raise RuntimeError(modelslab_error(data))
+        if not remote_url:
+            raise TimeoutError("ModelsLab video generation timed out.")
+    mp4_url, mp4_path, _ = download_url_to_output(remote_url, "modelslab_video", ".mp4", timeout=600)
+    webm_url = transcode_mp4_path_to_webm(mp4_path)
+    return {"url": webm_url or mp4_url, "type": "video", "mp4Url": mp4_url}
+
+
+# --------------------------------------------------------------------------- #
 # Job runners
 # --------------------------------------------------------------------------- #
 def make_job(kind: str) -> str:
@@ -898,6 +1292,45 @@ def run_image_job(job_id: str, payload: dict[str, Any]) -> None:
                        meta={"engine": "xai", "modelTitle": "Grok Imagine", "model": model})
             return
 
+        if engine in ("sdxl", "stability", "stability-ai"):
+            key, provider = modelslab_key()
+            if key:
+                model = str(payload.get("modelslabImageModel") or settings.get("modelslabImageModel")
+                            or DEFAULT_MODELSLAB_IMAGE_MODEL)
+                update_job(job_id, status="running", meta={"engine": "modelslab", "modelTitle": model})
+                urls, title = modelslab_generate_image(prompt, aspect, count, model, key)
+                update_job(job_id, status="done",
+                           results=[{"url": u, "type": "image"} for u in urls],
+                           meta={"engine": "modelslab", "modelTitle": f"ModelsLab {title}",
+                                 "model": model, "provider": provider})
+                return
+
+            model = str(payload.get("stabilityImageModel") or settings.get("stabilityImageModel")
+                        or DEFAULT_STABILITY_IMAGE_MODEL)
+            key, provider = stability_key()
+            update_job(job_id, status="running", meta={"engine": "sdxl", "modelTitle": model})
+            if not key:
+                raise RuntimeError("No SDXL provider key saved. Add a ModelsLab key as sdxl/modelslab or a Stability key as stability.")
+            urls, title = stability_generate_image(prompt, aspect, count, model, key)
+            update_job(job_id, status="done",
+                       results=[{"url": u, "type": "image"} for u in urls],
+                       meta={"engine": "sdxl", "modelTitle": title, "model": model, "provider": provider})
+            return
+
+        if engine in ("modelslab", "models-lab", "stable-diffusion-api"):
+            model = str(payload.get("modelslabImageModel") or settings.get("modelslabImageModel")
+                        or DEFAULT_MODELSLAB_IMAGE_MODEL)
+            key, provider = modelslab_key()
+            update_job(job_id, status="running", meta={"engine": "modelslab", "modelTitle": model})
+            if not key:
+                raise RuntimeError("No ModelsLab API key saved. Add one in Settings as modelslab or sdxl.")
+            urls, title = modelslab_generate_image(prompt, aspect, count, model, key)
+            update_job(job_id, status="done",
+                       results=[{"url": u, "type": "image"} for u in urls],
+                       meta={"engine": "modelslab", "modelTitle": f"ModelsLab {title}",
+                             "model": model, "provider": provider})
+            return
+
         # local Z-Image Turbo
         width, height = ASPECT_TO_SIZE.get(aspect, (1024, 1024))
         graph = build_zimage_graph({
@@ -932,6 +1365,33 @@ def run_video_job(job_id: str, payload: dict[str, Any]) -> None:
     base_w, base_h = ASPECT_TO_SIZE.get(aspect, (1280, 720))
     settings = load_settings()
     try:
+        if model in ("sdxl", "modelslab", "models-lab", "stable-diffusion-api"):
+            modelslab_model = str(payload.get("modelslabVideoModel") or settings.get("modelslabVideoModel")
+                                  or DEFAULT_MODELSLAB_VIDEO_MODEL)
+            update_job(job_id, status="running",
+                       meta={"engine": "modelslab", "modelTitle": "ModelsLab Video", "model": modelslab_model})
+            key, provider = modelslab_key()
+            if not key:
+                raise RuntimeError("No ModelsLab API key saved. Add one in Settings as modelslab or sdxl.")
+
+            def on_modelslab_progress(status: str, progress: object) -> None:
+                update_job(job_id, status="running",
+                           meta={"engine": "modelslab", "modelTitle": "ModelsLab Video",
+                                 "model": modelslab_model, "modelslabStatus": status, "progress": progress,
+                                 "provider": provider})
+
+            result = modelslab_generate_video(
+                prompt, aspect, payload.get("seconds"), modelslab_model, key,
+                on_progress=on_modelslab_progress,
+            )
+            update_job(job_id, status="done", results=[result],
+                       meta={"engine": "modelslab", "modelTitle": "ModelsLab Video", "model": modelslab_model,
+                             "provider": provider})
+            return
+
+        if model in ("stability", "stability-ai"):
+            raise RuntimeError("Stability image keys are available for images only here; use ModelsLab, xAI, or local Wan for video.")
+
         if model == "xai":
             xai_model = str(payload.get("xaiVideoModel") or settings.get("xaiVideoModel") or DEFAULT_XAI_VIDEO_MODEL)
             update_job(job_id, status="running",
@@ -1193,7 +1653,10 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(400, {"error": str(exc)})
             if path == "/api/secrets":
                 provider = str(data.get("provider") or "gemini").lower()
-                save_secret(provider, str(data.get("key") or ""))
+                try:
+                    save_secret(provider, str(data.get("key") or ""))
+                except ValueError as exc:
+                    return self._json(400, {"error": str(exc)})
                 return self._json(200, self.api_secrets())
             if path == "/api/generate/image":
                 if not str(data.get("prompt") or "").strip():
@@ -1211,6 +1674,8 @@ class Handler(BaseHTTPRequestHandler):
     def api_config(self) -> dict[str, Any]:
         settings = load_settings()
         models = detect_models()
+        stability_value, stability_provider = stability_key()
+        modelslab_value, modelslab_provider = modelslab_key()
         return {
             "comfyUrl": settings["comfyUrl"],
             "comfyReachable": models["reachable"],
@@ -1220,22 +1685,32 @@ class Handler(BaseHTTPRequestHandler):
             "xaiConfigured": bool(xai_key()),
             "xaiImageModel": settings["xaiImageModel"],
             "xaiVideoModel": settings["xaiVideoModel"],
+            "sdxlConfigured": bool(stability_value or modelslab_value),
+            "stabilityConfigured": bool(stability_value),
+            "stabilityProvider": stability_provider if stability_value else "",
+            "stabilityImageModel": settings["stabilityImageModel"],
+            "modelslabConfigured": bool(modelslab_value),
+            "modelslabProvider": modelslab_provider if modelslab_value else "",
+            "modelslabImageModel": settings["modelslabImageModel"],
+            "modelslabVideoModel": settings["modelslabVideoModel"],
             "defaultImageEngine": settings["defaultImageEngine"],
         }
 
     def api_secrets(self) -> dict[str, Any]:
         secrets = load_secrets()
         out = {}
-        env_keys = {"gemini": "GEMINI_API_KEY", "xai": "XAI_API_KEY"}
-        for provider in ("gemini", "xai"):
-            env_name = env_keys[provider]
-            value = secrets.get(provider) or ("env" if os.environ.get(env_name) else "")
-            out[provider] = {
-                "configured": bool(value),
-                "hint": (f"…{value[-4:]}" if value and value != "env" else ("environment" if value == "env" else "")),
-                "source": "env" if value == "env" else ("file" if value else ""),
-            }
-        return {"providers": out}
+        custom = []
+        for provider in KNOWN_SECRET_PROVIDERS:
+            env_value = os.environ.get(SECRET_ENV_KEYS[provider], "")
+            if secrets.get(provider):
+                out[provider] = secret_status(secrets[provider], "file")
+            else:
+                out[provider] = secret_status(env_value, "env")
+        for provider in sorted(k for k in secrets if k not in KNOWN_SECRET_PROVIDERS):
+            status = secret_status(secrets[provider], "file")
+            out[provider] = status
+            custom.append({"provider": provider, **status})
+        return {"providers": out, "customProviders": custom}
 
     def api_job(self, job_id: str) -> None:
         job = get_job(job_id)

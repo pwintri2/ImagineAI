@@ -38,6 +38,7 @@ export function init() {
 function modelAvailable(id) {
   const { config } = getState();
   if (id === 'xai') return !!config.xaiConfigured;
+  if (id === 'sdxl') return !!config.modelslabConfigured;
   return !!(config.comfyReachable && config.models?.video?.[id]);
 }
 
@@ -48,6 +49,7 @@ export function render() {
   const wanTi2vOk = modelAvailable('wan22_ti2v_5b');
   const wan21Ok = modelAvailable('wan21_1_3b');
   const xaiOk = modelAvailable('xai');
+  const showSdxl = !!s.config.modelslabConfigured;
   const selectedImage = s._draftVideoStartImage;
   const imageError = s._draftVideoStartImageError || '';
 
@@ -68,6 +70,7 @@ export function render() {
         <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Model</label>
         <div id="modelChips" class="flex flex-wrap gap-1.5">
           ${chip(`𝕏 ${VIDEO_MODELS.xai.title}`, 'xai', 'model', s.videoModel === 'xai', !xaiOk)}
+          ${showSdxl ? chip(`▣ ${VIDEO_MODELS.sdxl.title}`, 'sdxl', 'model', s.videoModel === 'sdxl', !modelAvailable('sdxl')) : ''}
           ${chip(`✨ ${VIDEO_MODELS.wan22_14b.title}`, 'wan22_14b', 'model', s.videoModel === 'wan22_14b', !wan22Ok)}
           ${chip(`🎞 ${VIDEO_MODELS.wan22_ti2v_5b.title}`, 'wan22_ti2v_5b', 'model', s.videoModel === 'wan22_ti2v_5b', !wanTi2vOk)}
           ${chip(`🪶 ${VIDEO_MODELS.wan21_1_3b.title}`, 'wan21_1_3b', 'model', s.videoModel === 'wan21_1_3b', !wan21Ok)}
@@ -124,6 +127,7 @@ function videoHint(s, anyModel) {
     if (!s.config.xaiConfigured) return 'Add an xAI key in Settings to generate Grok videos.';
     return 'Grok Imagine runs in xAI cloud · supports text-to-video and start images.';
   }
+  if (s.videoModel === 'sdxl') return 'ModelsLab text-to-video runs in the cloud · uses your ModelsLab quota.';
   if (!s.config.comfyReachable) return 'ComfyUI not detected — start it to generate video.';
   if (!anyModel) return 'No Wan video model found in ComfyUI.';
   return 'Text-to-video runs locally on your GPU · can take a few minutes.';

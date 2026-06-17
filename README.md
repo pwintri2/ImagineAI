@@ -17,6 +17,10 @@ is busy: Google Gemini for images, and xAI Grok Imagine for images and videos.
 - Optional Gemini image fallback with a locally stored API key.
 - Optional xAI Grok Imagine image and video generation with a locally stored API
   key.
+- Optional ModelsLab SDXL image and text-to-video generation with a locally
+  stored `sdxl` or `modelslab` key.
+- Optional Stability image generation with a locally stored `stability` or
+  `stability-ai` key.
 - Browser UI plus Tauri desktop packaging.
 - Local history, background jobs, media proxying, and ComfyUI model detection.
 - No third-party Python packages required for the server.
@@ -29,6 +33,8 @@ is busy: Google Gemini for images, and xAI Grok Imagine for images and videos.
 - The ComfyUI model files used by the bundled Z-Image and Wan workflows.
 - Optional: a Gemini API key for the cloud image engine.
 - Optional: an xAI API key for Grok Imagine image and video generation.
+- Optional: a ModelsLab API key saved as `sdxl` or `modelslab`.
+- Optional: a Stability AI API key saved as `stability` or `stability-ai`.
 
 ## Quick Start
 
@@ -82,10 +88,25 @@ Open Settings in the app to configure:
 - Gemini API key.
 - xAI image/video models.
 - xAI API key.
+- Other named API keys for future providers or local helper scripts.
+- ModelsLab image/video models when a ModelsLab key is saved.
+- Stability image model (`core`, `sd3`, or `ultra`) when a Stability key is
+  saved.
 
 Secrets are stored locally in `data/secrets.json` with restrictive permissions
 where supported. That file is ignored by git. You can also provide the Gemini
 key with `GEMINI_API_KEY`. You can provide the xAI key with `XAI_API_KEY`.
+You can provide the ModelsLab key with `MODELSLAB_API_KEY`, or save it in
+Settings as `sdxl` or `modelslab`. You can provide the Stability key with
+`STABILITY_API_KEY`, or save it in Settings as `stability` or `stability-ai`.
+Other saved keys are shown only as masked status hints and are not used by the
+built-in generators until a provider integration is added.
+
+For ModelsLab images, ImagineAI first tries the high-quality
+`/api/v6/images/text2img` endpoint. If ModelsLab returns 403 because that
+feature is not available on the current plan, it automatically falls back to
+`/api/v6/realtime/text2img`. ModelsLab video 403s are reported as plan/feature
+access errors because there is no equivalent text-to-video fallback in the app.
 
 ## Environment
 
@@ -98,6 +119,13 @@ key with `GEMINI_API_KEY`. You can provide the xAI key with `XAI_API_KEY`.
 | `XAI_IMAGE_MODEL` | `grok-imagine-image-quality` | xAI image model |
 | `XAI_VIDEO_MODEL` | `grok-imagine-video` | xAI video model |
 | `XAI_BASE_URL` | `https://api.x.ai/v1` | xAI API base URL |
+| `STABILITY_API_KEY` | empty | Stability/SDXL key for cloud image generation |
+| `STABILITY_IMAGE_MODEL` | `core` | Stability image model: `core`, `sd3`, or `ultra` |
+| `STABILITY_BASE_URL` | `https://api.stability.ai` | Stability API base URL |
+| `MODELSLAB_API_KEY` | empty | ModelsLab key for SDXL image/video generation |
+| `MODELSLAB_IMAGE_MODEL` | `sdxl` | ModelsLab image model ID |
+| `MODELSLAB_VIDEO_MODEL` | `wan2.2` | ModelsLab text-to-video model ID |
+| `MODELSLAB_BASE_URL` | `https://modelslab.com` | ModelsLab API base URL |
 | `IMAGINEAI_HOST` | `127.0.0.1` | HTTP bind host |
 | `IMAGINEAI_PORT` | `8799` | HTTP port |
 | `IMAGINEAI_DATA_DIR` | `./data` | Local settings, secrets, and outputs |

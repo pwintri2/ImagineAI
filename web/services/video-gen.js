@@ -5,6 +5,10 @@ export const VIDEO_MODELS = {
     id: 'xai', title: 'Grok Imagine', subtitle: 'Cloud · xAI',
     note: 'xAI text-to-video and image-to-video · uses your xAI quota', defaultSeconds: 5,
   },
+  sdxl: {
+    id: 'sdxl', title: 'ModelsLab Video', subtitle: 'Cloud · ModelsLab',
+    note: 'Text-to-video through ModelsLab · uses your ModelsLab quota', defaultSeconds: 2,
+  },
   wan22_14b: {
     id: 'wan22_14b', title: 'Wan 2.2 14B', subtitle: 'Highest quality',
     note: 'Dual-model + 4-step LoRA · slower, sharper', defaultSeconds: 2,
