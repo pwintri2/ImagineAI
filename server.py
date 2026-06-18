@@ -47,6 +47,9 @@ GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
 DEFAULT_XAI_IMAGE_MODEL = os.environ.get("XAI_IMAGE_MODEL", "grok-imagine-image-quality")
 DEFAULT_XAI_VIDEO_MODEL = os.environ.get("XAI_VIDEO_MODEL", "grok-imagine-video")
 XAI_BASE = os.environ.get("XAI_BASE_URL", "https://api.x.ai/v1").rstrip("/")
+DEFAULT_ATLAS_IMAGE_MODEL = os.environ.get("ATLAS_IMAGE_MODEL", os.environ.get("ATLASCLOUD_IMAGE_MODEL", "seedream-3.0"))
+DEFAULT_ATLAS_VIDEO_MODEL = os.environ.get("ATLAS_VIDEO_MODEL", os.environ.get("ATLASCLOUD_VIDEO_MODEL", "kling-v2.0"))
+ATLAS_BASE = os.environ.get("ATLAS_BASE_URL", os.environ.get("ATLASCLOUD_BASE_URL", "https://api.atlascloud.ai/api/v1")).rstrip("/")
 DEFAULT_STABILITY_IMAGE_MODEL = os.environ.get("STABILITY_IMAGE_MODEL", "core")
 STABILITY_BASE = os.environ.get("STABILITY_BASE_URL", "https://api.stability.ai").rstrip("/")
 DEFAULT_MODELSLAB_IMAGE_MODEL = os.environ.get("MODELSLAB_IMAGE_MODEL", "sdxl")
@@ -63,6 +66,10 @@ COMFY_IMAGE_TIMEOUT = float(os.environ.get("IMAGINEAI_IMAGE_TIMEOUT", "600"))
 COMFY_VIDEO_TIMEOUT = float(os.environ.get("IMAGINEAI_VIDEO_TIMEOUT", "3600"))
 COMFY_MISSING_HISTORY_GRACE = float(os.environ.get("IMAGINEAI_MISSING_HISTORY_GRACE", "25"))
 XAI_VIDEO_TIMEOUT = float(os.environ.get("IMAGINEAI_XAI_VIDEO_TIMEOUT", "1200"))
+XAI_MAX_SECONDS_PER_REQUEST = 15
+XAI_MAX_STITCHED_SECONDS = 30
+ATLAS_IMAGE_TIMEOUT = float(os.environ.get("IMAGINEAI_ATLAS_IMAGE_TIMEOUT", "600"))
+ATLAS_VIDEO_TIMEOUT = float(os.environ.get("IMAGINEAI_ATLAS_VIDEO_TIMEOUT", "1200"))
 
 # Wan video shares the GPU with Z-Image; only one heavy ComfyUI job at a time.
 COMFY_LOCK = threading.Lock()
@@ -74,8 +81,22 @@ SECRETS_LOCK = threading.Lock()
 
 KNOWN_SECRET_PROVIDERS = ("gemini", "xai")
 SECRET_ENV_KEYS = {"gemini": "GEMINI_API_KEY", "xai": "XAI_API_KEY"}
+ATLAS_SECRET_PROVIDERS = ("atlas", "atlascloud", "atlas-cloud")
 STABILITY_SECRET_PROVIDERS = ("stability", "stability-ai")
-MODELSLAB_SECRET_PROVIDERS = ("modelslab", "models-lab", "stable-diffusion-api", "sdxl")
+MODELSLAB_SECRET_PROVIDERS = (
+    "modelslab",
+    "models-lab",
+    "stable-diffusion-api",
+    "sdxl",
+    "modelslab-free",
+    "modelslab-free-api",
+    "models-lab-free",
+    "models-lab-free-api",
+    "free-api",
+    "freeapi",
+    "vrije-api",
+    "vrijeapi",
+)
 
 DEFAULT_NEGATIVE_IMAGE = ""
 DEFAULT_NEGATIVE_VIDEO = (
@@ -176,6 +197,8 @@ def load_settings() -> dict[str, Any]:
         "geminiModel": DEFAULT_GEMINI_MODEL,
         "xaiImageModel": DEFAULT_XAI_IMAGE_MODEL,
         "xaiVideoModel": DEFAULT_XAI_VIDEO_MODEL,
+        "atlasImageModel": DEFAULT_ATLAS_IMAGE_MODEL,
+        "atlasVideoModel": DEFAULT_ATLAS_VIDEO_MODEL,
         "stabilityImageModel": DEFAULT_STABILITY_IMAGE_MODEL,
         "modelslabImageModel": DEFAULT_MODELSLAB_IMAGE_MODEL,
         "modelslabVideoModel": DEFAULT_MODELSLAB_VIDEO_MODEL,
@@ -203,7 +226,7 @@ def valid_http_url(url: str) -> bool:
 
 def save_settings(patch: dict[str, Any]) -> dict[str, Any]:
     current = load_settings()
-    for key in ("comfyUrl", "geminiModel", "xaiImageModel", "xaiVideoModel", "stabilityImageModel",
+    for key in ("comfyUrl", "geminiModel", "xaiImageModel", "xaiVideoModel", "atlasImageModel", "atlasVideoModel", "stabilityImageModel",
                 "modelslabImageModel", "modelslabVideoModel", "defaultImageEngine"):
         if key in patch and isinstance(patch[key], str) and patch[key].strip():
             value = patch[key].strip()
@@ -282,6 +305,17 @@ def gemini_key() -> str:
 
 def xai_key() -> str:
     return load_secrets().get("xai") or os.environ.get("XAI_API_KEY", "")
+
+
+def atlas_key() -> tuple[str, str]:
+    secrets = load_secrets()
+    for provider in ATLAS_SECRET_PROVIDERS:
+        if secrets.get(provider):
+            return secrets[provider], provider
+    for env_key in ("ATLAS_API_KEY", "ATLASCLOUD_API_KEY"):
+        if os.environ.get(env_key):
+            return os.environ.get(env_key, ""), "env"
+    return "", "env"
 
 
 def stability_key() -> tuple[str, str]:
@@ -871,9 +905,13 @@ def xai_generate_image(prompt: str, aspect: str, count: int, model: str, key: st
     return urls
 
 
-def xai_generate_video(prompt: str, aspect: str, seconds: object, model: str, key: str,
-                       start_image: object = "", on_progress=None) -> dict[str, Any]:
-    duration = clamp_int(seconds, 5, 1, 15)
+def xai_public_video_result(result: dict[str, Any]) -> dict[str, Any]:
+    out = {k: v for k, v in result.items() if k != "mp4Path"}
+    return out
+
+
+def xai_generate_video_clip(prompt: str, aspect: str, duration: int, model: str, key: str,
+                            start_image: object = "", on_progress=None) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "model": model,
         "prompt": prompt,
@@ -904,7 +942,7 @@ def xai_generate_video(prompt: str, aspect: str, seconds: object, model: str, ke
                 raise RuntimeError("xAI video finished without a video URL.")
             mp4_url, mp4_path, _ = download_url_to_output(remote_url, "xai_video", ".mp4", timeout=600)
             webm_url = transcode_mp4_path_to_webm(mp4_path)
-            return {"url": webm_url or mp4_url, "type": "video", "mp4Url": mp4_url}
+            return {"url": webm_url or mp4_url, "type": "video", "mp4Url": mp4_url, "mp4Path": str(mp4_path)}
         if status in ("failed", "expired"):
             err = data.get("error") if isinstance(data.get("error"), dict) else {}
             message = err.get("message") or f"xAI video request {status}."
@@ -912,6 +950,259 @@ def xai_generate_video(prompt: str, aspect: str, seconds: object, model: str, ke
             raise RuntimeError(f"xAI video failed [{code}]: {message}" if code else str(message))
         time.sleep(5)
     raise TimeoutError("xAI video generation timed out.")
+
+
+def segment_prompt(prompt: str, index: int, total: int) -> str:
+    if total <= 1:
+        return prompt
+    return (
+        f"{prompt}\n\n"
+        f"Segment {index} of {total}: keep the same setting, subjects, style, camera language, and motion continuity."
+    )
+
+
+def xai_generate_video(prompt: str, aspect: str, seconds: object, model: str, key: str,
+                       start_image: object = "", on_progress=None) -> dict[str, Any]:
+    duration = clamp_int(seconds, 5, 1, XAI_MAX_STITCHED_SECONDS)
+    if duration <= XAI_MAX_SECONDS_PER_REQUEST:
+        return xai_public_video_result(
+            xai_generate_video_clip(prompt, aspect, duration, model, key, start_image, on_progress)
+        )
+
+    remaining = duration
+    segment_lengths: list[int] = []
+    while remaining > 0:
+        segment = min(XAI_MAX_SECONDS_PER_REQUEST, remaining)
+        segment_lengths.append(segment)
+        remaining -= segment
+
+    clips: list[dict[str, Any]] = []
+    total = len(segment_lengths)
+    for index, segment in enumerate(segment_lengths, start=1):
+        def segment_progress(status: str, progress: object, idx=index, total_segments=total) -> None:
+            if on_progress:
+                on_progress(f"segment {idx}/{total_segments}: {status}", progress)
+
+        clips.append(xai_generate_video_clip(
+            segment_prompt(prompt, index, total),
+            aspect,
+            segment,
+            model,
+            key,
+            start_image if index == 1 else "",
+            on_progress=segment_progress,
+        ))
+
+    paths = [Path(str(clip.get("mp4Path") or "")) for clip in clips if clip.get("mp4Path")]
+    combined_url = concat_mp4_paths_to_webm(paths)
+    if not combined_url:
+        raise RuntimeError("Grok generated the video segments, but ImagineAI could not stitch them into one file.")
+    return {
+        "url": combined_url,
+        "type": "video",
+        "segments": [xai_public_video_result(clip) for clip in clips],
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Atlas Cloud image generation
+# --------------------------------------------------------------------------- #
+class AtlasHTTPError(RuntimeError):
+    def __init__(self, code: int, message: str) -> None:
+        super().__init__(f"Atlas API error {code}: {message}")
+        self.code = code
+        self.message = message
+
+
+def atlas_request_json(path: str, key: str, payload: dict[str, Any] | None = None,
+                       method: str = "GET", timeout: float = 120) -> dict[str, Any]:
+    body = None if payload is None else json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(f"{ATLAS_BASE}{path}", data=body, method=method)
+    req.add_header("Authorization", f"Bearer {key}")
+    if payload is not None:
+        req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            raw = response.read().decode("utf-8") or "{}"
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")
+        message = detail[:500]
+        try:
+            parsed = json.loads(detail)
+            if isinstance(parsed, dict):
+                err = parsed.get("error")
+                if isinstance(err, dict):
+                    message = str(err.get("message") or err.get("code") or message)
+                else:
+                    message = str(parsed.get("message") or parsed.get("detail") or err or message)
+        except (json.JSONDecodeError, TypeError):
+            pass
+        raise AtlasHTTPError(exc.code, message) from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Could not reach Atlas API: {exc.reason}") from exc
+    return json.loads(raw)
+
+
+def atlas_data(data: dict[str, Any]) -> dict[str, Any]:
+    nested = data.get("data")
+    return nested if isinstance(nested, dict) else data
+
+
+def atlas_prediction_id(data: dict[str, Any]) -> str:
+    body = atlas_data(data)
+    request_id = str(body.get("id") or body.get("request_id") or body.get("prediction_id") or "").strip()
+    if not request_id:
+        raise RuntimeError("Atlas did not return a prediction id.")
+    return request_id
+
+
+def atlas_extract_outputs(data: dict[str, Any]) -> list[str]:
+    body = atlas_data(data)
+    urls: list[str] = []
+    seen: set[str] = set()
+
+    def add(value: object) -> None:
+        if isinstance(value, dict):
+            for key in ("url", "output", "image", "image_url", "src"):
+                if value.get(key):
+                    add(value.get(key))
+            return
+        candidate = str(value or "").strip()
+        if not candidate or candidate in seen:
+            return
+        seen.add(candidate)
+        urls.append(candidate)
+
+    outputs = body.get("outputs") or body.get("output") or body.get("urls") or body.get("url")
+    if isinstance(outputs, list):
+        for item in outputs:
+            add(item)
+    elif isinstance(outputs, dict):
+        for item in outputs.values():
+            add(item)
+    else:
+        add(outputs)
+    return urls
+
+
+def atlas_poll_result(request_id: str, key: str, on_progress=None,
+                      timeout: float | None = None, interval: float = 2) -> dict[str, Any]:
+    deadline = now() + (timeout if timeout is not None else ATLAS_IMAGE_TIMEOUT)
+    use_result_endpoint = False
+    last_status = "running"
+    while now() < deadline:
+        path = "/model/result/" if use_result_endpoint else "/model/prediction/"
+        try:
+            data = atlas_request_json(f"{path}{urllib.parse.quote(request_id)}", key, timeout=120)
+        except AtlasHTTPError as exc:
+            if exc.code == 404 and not use_result_endpoint:
+                use_result_endpoint = True
+                continue
+            raise
+        body = atlas_data(data)
+        status = str(body.get("status") or "").lower()
+        last_status = status or last_status
+        if on_progress:
+            on_progress(last_status)
+        if status in ("completed", "succeeded", "success", "done") or (not status and atlas_extract_outputs(data)):
+            if atlas_extract_outputs(data):
+                return data
+            raise RuntimeError("Atlas image finished without an output URL.")
+        if status in ("failed", "failure", "error", "cancelled", "canceled"):
+            raise RuntimeError(str(body.get("error") or body.get("message") or f"Atlas request {status}."))
+        time.sleep(interval)
+    raise TimeoutError("Atlas generation timed out.")
+
+
+def atlas_generate_image(prompt: str, aspect: str, count: int, model: str, key: str, on_progress=None) -> list[str]:
+    requested = clamp_int(count, 1, 1, 4)
+    model_id = model or DEFAULT_ATLAS_IMAGE_MODEL
+    urls: list[str] = []
+    for index in range(requested):
+        payload = {
+            "model": model_id,
+            "prompt": prompt,
+        }
+        if requested > 1 and on_progress:
+            on_progress(f"submitting {index + 1}/{requested}")
+        started = atlas_request_json("/model/generateImage", key, payload, method="POST", timeout=120)
+        request_id = atlas_prediction_id(started)
+        result = atlas_poll_result(request_id, key, on_progress=on_progress, timeout=ATLAS_IMAGE_TIMEOUT, interval=2)
+        for remote in atlas_extract_outputs(result):
+            if remote.startswith("data:") and "," in remote:
+                header, b64 = remote.split(",", 1)
+                ext = ".jpg" if "jpeg" in header or "jpg" in header else ".png"
+                try:
+                    raw = base64.b64decode(b64, validate=True)
+                except (ValueError, binascii.Error) as exc:
+                    raise RuntimeError("Atlas returned image data that could not be decoded.") from exc
+                url, _, _ = save_output_bytes("atlas_image", raw, ext)
+            elif remote.startswith(("http://", "https://")):
+                url, _, _ = download_url_to_output(remote, "atlas_image", ".png", timeout=600)
+            else:
+                continue
+            urls.append(url)
+            break
+    if not urls:
+        raise RuntimeError("Atlas returned no image data. Try a different prompt or model.")
+    return urls[:requested]
+
+
+def atlas_upload_media(data_url: object, key: str, original_name: object = "") -> str:
+    ext, raw = decode_image_data_url(data_url)
+    mime = "image/jpeg" if ext == "jpg" else f"image/{ext}"
+    fallback_name = f"start.{ext}"
+    filename = safe_download_name(original_name, fallback_name)
+    if "." not in filename:
+        filename = f"{filename}.{ext}"
+    boundary = f"----ImagineAIAtlas{uuid.uuid4().hex}"
+    chunks = [
+        f"--{boundary}\r\n".encode("utf-8"),
+        f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'.encode("utf-8"),
+        f"Content-Type: {mime}\r\n\r\n".encode("utf-8"),
+        raw,
+        b"\r\n",
+        f"--{boundary}--\r\n".encode("utf-8"),
+    ]
+    req = urllib.request.Request(f"{ATLAS_BASE}/model/uploadMedia", data=b"".join(chunks), method="POST")
+    req.add_header("Authorization", f"Bearer {key}")
+    req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+    try:
+        with urllib.request.urlopen(req, timeout=240) as response:
+            data = json.loads(response.read().decode("utf-8") or "{}")
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")
+        raise AtlasHTTPError(exc.code, detail[:500]) from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Could not upload media to Atlas: {exc.reason}") from exc
+    body = atlas_data(data)
+    url = str(body.get("url") or body.get("image_url") or body.get("media_url") or "").strip()
+    if not url:
+        raise RuntimeError("Atlas media upload did not return a URL.")
+    return url
+
+
+def atlas_generate_video(prompt: str, aspect: str, seconds: object, model: str, key: str,
+                         start_image: object = "", start_image_name: object = "", on_progress=None) -> dict[str, Any]:
+    model_id = model or DEFAULT_ATLAS_VIDEO_MODEL
+    payload: dict[str, Any] = {
+        "model": model_id,
+        "prompt": prompt,
+    }
+    if isinstance(start_image, str) and start_image.strip():
+        if on_progress:
+            on_progress("uploading image")
+        payload["image_url"] = atlas_upload_media(start_image, key, start_image_name)
+    started = atlas_request_json("/model/generateVideo", key, payload, method="POST", timeout=120)
+    request_id = atlas_prediction_id(started)
+    result = atlas_poll_result(request_id, key, on_progress=on_progress, timeout=ATLAS_VIDEO_TIMEOUT, interval=5)
+    outputs = atlas_extract_outputs(result)
+    remote_url = next((url for url in outputs if url.startswith(("http://", "https://"))), "")
+    if not remote_url:
+        raise RuntimeError("Atlas video finished without a downloadable video URL.")
+    mp4_url, mp4_path, _ = download_url_to_output(remote_url, "atlas_video", ".mp4", timeout=900)
+    webm_url = transcode_mp4_path_to_webm(mp4_path)
+    return {"url": webm_url or mp4_url, "type": "video", "mp4Url": mp4_url}
 
 
 # --------------------------------------------------------------------------- #
@@ -1022,6 +1313,17 @@ class ModelsLabHTTPError(RuntimeError):
         self.message = message
 
 
+def modelslab_payload_is_result(data: object) -> bool:
+    if not isinstance(data, dict):
+        return False
+    status = str(data.get("status") or "").lower()
+    if status in ("error", "failed", "failure"):
+        return False
+    has_url = any(bool(data.get(key)) for key in ("output", "proxy_links", "future_links"))
+    has_request_id = bool(data.get("id") or data.get("request_id"))
+    return status in ("success", "processing", "queued", "pending") and (has_url or has_request_id)
+
+
 def modelslab_request_json(path: str, payload: dict[str, Any], timeout: float = 120) -> dict[str, Any]:
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(f"{MODELSLAB_BASE}{path}", data=body, method="POST")
@@ -1036,7 +1338,10 @@ def modelslab_request_json(path: str, payload: dict[str, Any], timeout: float = 
         try:
             parsed = json.loads(detail)
             if isinstance(parsed, dict):
-                message = str(parsed.get("message") or parsed.get("error") or parsed.get("errors") or message)
+                if modelslab_payload_is_result(parsed):
+                    return parsed
+                message = str(parsed.get("message") or parsed.get("messege")
+                              or parsed.get("error") or parsed.get("errors") or message)
         except (json.JSONDecodeError, TypeError):
             pass
         if exc.code == 403 and message.lower() in ("forbidden", "403 forbidden"):
@@ -1047,9 +1352,14 @@ def modelslab_request_json(path: str, payload: dict[str, Any], timeout: float = 
 
 
 def modelslab_error(data: dict[str, Any]) -> str:
-    message = data.get("message") or data.get("error") or data.get("tip") or "ModelsLab request failed."
+    message = (
+        data.get("message") or data.get("messege") or data.get("error")
+        or data.get("errors") or data.get("tip") or "ModelsLab request failed."
+    )
     if isinstance(message, list):
         message = "; ".join(str(item) for item in message)
+    if isinstance(message, dict):
+        message = message.get("message") or message.get("error") or json.dumps(message, ensure_ascii=False)
     return str(message)
 
 
@@ -1062,15 +1372,31 @@ def modelslab_plan_error(feature: str) -> RuntimeError:
 
 def modelslab_extract_urls(data: dict[str, Any]) -> list[str]:
     urls: list[str] = []
-    for key in ("output", "proxy_links"):
+    seen: set[str] = set()
+
+    def add(value: object) -> None:
+        candidate = str(value or "").strip()
+        if not candidate or not candidate.startswith(("http://", "https://")) or candidate in seen:
+            return
+        seen.add(candidate)
+        urls.append(candidate)
+
+    for key in ("output", "proxy_links", "future_links"):
         values = data.get(key)
         if isinstance(values, list):
-            urls.extend(str(v).strip() for v in values if str(v).strip())
+            for value in values:
+                add(value)
+        elif isinstance(values, dict):
+            for value in values.values():
+                add(value)
+        elif isinstance(values, str):
+            add(values)
     return urls
 
 
 def modelslab_fetch_image(request_id: object, key: str) -> dict[str, Any]:
-    return modelslab_request_json("/api/v6/images/fetch", {"key": key, "request_id": str(request_id)}, timeout=120)
+    request_id_path = urllib.parse.quote(str(request_id))
+    return modelslab_request_json(f"/api/v6/images/fetch/{request_id_path}", {"key": key}, timeout=120)
 
 
 def modelslab_fetch_realtime_image(request_id: object, key: str) -> dict[str, Any]:
@@ -1292,6 +1618,25 @@ def run_image_job(job_id: str, payload: dict[str, Any]) -> None:
                        meta={"engine": "xai", "modelTitle": "Grok Imagine", "model": model})
             return
 
+        if engine in ("atlas", "atlascloud", "atlas-cloud"):
+            model = str(payload.get("atlasImageModel") or settings.get("atlasImageModel") or DEFAULT_ATLAS_IMAGE_MODEL)
+            key, provider = atlas_key()
+            update_job(job_id, status="running", meta={"engine": "atlas", "modelTitle": model, "provider": provider})
+            if not key:
+                raise RuntimeError("No Atlas API key saved. Add one in Settings as atlas or atlascloud.")
+
+            def on_atlas_progress(status: str) -> None:
+                update_job(job_id, status="running",
+                           meta={"engine": "atlas", "modelTitle": model, "atlasStatus": status,
+                                 "provider": provider})
+
+            urls = atlas_generate_image(prompt, aspect, count, model, key, on_progress=on_atlas_progress)
+            update_job(job_id, status="done",
+                       results=[{"url": u, "type": "image"} for u in urls],
+                       meta={"engine": "atlas", "modelTitle": f"Atlas {model}",
+                             "model": model, "provider": provider})
+            return
+
         if engine in ("sdxl", "stability", "stability-ai"):
             key, provider = modelslab_key()
             if key:
@@ -1392,6 +1737,32 @@ def run_video_job(job_id: str, payload: dict[str, Any]) -> None:
         if model in ("stability", "stability-ai"):
             raise RuntimeError("Stability image keys are available for images only here; use ModelsLab, xAI, or local Wan for video.")
 
+        if model in ("atlas", "atlascloud", "atlas-cloud"):
+            atlas_model = str(payload.get("atlasVideoModel") or settings.get("atlasVideoModel")
+                              or DEFAULT_ATLAS_VIDEO_MODEL)
+            key, provider = atlas_key()
+            update_job(job_id, status="running",
+                       meta={"engine": "atlas", "modelTitle": "Atlas Video", "model": atlas_model,
+                             "provider": provider})
+            if not key:
+                raise RuntimeError("No Atlas API key saved. Add one in Settings as atlas or atlascloud.")
+
+            def on_atlas_progress(status: str) -> None:
+                update_job(job_id, status="running",
+                           meta={"engine": "atlas", "modelTitle": "Atlas Video",
+                                 "model": atlas_model, "atlasStatus": status, "provider": provider})
+
+            result = atlas_generate_video(
+                prompt, aspect, payload.get("seconds"), atlas_model, key,
+                start_image=payload.get("startImage") or "",
+                start_image_name=payload.get("startImageName") or "",
+                on_progress=on_atlas_progress,
+            )
+            update_job(job_id, status="done", results=[result],
+                       meta={"engine": "atlas", "modelTitle": "Atlas Video", "model": atlas_model,
+                             "provider": provider})
+            return
+
         if model == "xai":
             xai_model = str(payload.get("xaiVideoModel") or settings.get("xaiVideoModel") or DEFAULT_XAI_VIDEO_MODEL)
             update_job(job_id, status="running",
@@ -1484,6 +1855,37 @@ out.close()
 inp.close()
 """
 
+_CONCAT_WEBM_SRC = r"""
+import sys, av
+dst, *srcs = sys.argv[1:]
+if not srcs:
+    raise SystemExit(2)
+out = None
+ovs = None
+try:
+    for src in srcs:
+        inp = av.open(src)
+        ivs = inp.streams.video[0]
+        if out is None:
+            out = av.open(dst, 'w')
+            ovs = out.add_stream('libvpx-vp9', rate=ivs.average_rate or 16)
+            ovs.width = ivs.width
+            ovs.height = ivs.height
+            ovs.pix_fmt = 'yuv420p'
+            ovs.options = {'crf': '34', 'b:v': '0', 'deadline': 'realtime', 'cpu-used': '8', 'row-mt': '1'}
+        for frame in inp.decode(ivs):
+            frame = frame.reformat(width=ovs.width, height=ovs.height, format='yuv420p')
+            frame.pts = None
+            for pkt in ovs.encode(frame):
+                out.mux(pkt)
+        inp.close()
+    for pkt in ovs.encode():
+        out.mux(pkt)
+finally:
+    if out is not None:
+        out.close()
+"""
+
 
 def transcode_mp4_path_to_webm(src_path: Path) -> str | None:
     """Re-encode a local mp4 to VP9 webm via ComfyUI's PyAV environment."""
@@ -1495,6 +1897,25 @@ def transcode_mp4_path_to_webm(src_path: Path) -> str | None:
         result = subprocess.run(
             [COMFY_PYTHON, "-c", _TRANSCODE_SRC, str(src_path), str(out_path)],
             capture_output=True, timeout=300,
+        )
+        if result.returncode != 0 or not out_path.exists() or out_path.stat().st_size == 0:
+            return None
+        return output_url(name)
+    except Exception:
+        return None
+
+
+def concat_mp4_paths_to_webm(src_paths: list[Path]) -> str | None:
+    """Stitch local mp4 clips into one VP9 webm via ComfyUI's PyAV environment."""
+    paths = [p for p in src_paths if p.exists() and p.is_file()]
+    if len(paths) < 2 or not Path(COMFY_PYTHON).exists():
+        return None
+    name = f"video_{int(now())}_{uuid.uuid4().hex[:8]}.webm"
+    out_path = OUTPUTS_DIR / name
+    try:
+        result = subprocess.run(
+            [COMFY_PYTHON, "-c", _CONCAT_WEBM_SRC, str(out_path), *[str(p) for p in paths]],
+            capture_output=True, timeout=900,
         )
         if result.returncode != 0 or not out_path.exists() or out_path.stat().st_size == 0:
             return None
@@ -1674,6 +2095,7 @@ class Handler(BaseHTTPRequestHandler):
     def api_config(self) -> dict[str, Any]:
         settings = load_settings()
         models = detect_models()
+        atlas_value, atlas_provider = atlas_key()
         stability_value, stability_provider = stability_key()
         modelslab_value, modelslab_provider = modelslab_key()
         return {
@@ -1685,6 +2107,10 @@ class Handler(BaseHTTPRequestHandler):
             "xaiConfigured": bool(xai_key()),
             "xaiImageModel": settings["xaiImageModel"],
             "xaiVideoModel": settings["xaiVideoModel"],
+            "atlasConfigured": bool(atlas_value),
+            "atlasProvider": atlas_provider if atlas_value else "",
+            "atlasImageModel": settings["atlasImageModel"],
+            "atlasVideoModel": settings["atlasVideoModel"],
             "sdxlConfigured": bool(stability_value or modelslab_value),
             "stabilityConfigured": bool(stability_value),
             "stabilityProvider": stability_provider if stability_value else "",

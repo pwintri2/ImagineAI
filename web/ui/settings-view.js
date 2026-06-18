@@ -79,6 +79,10 @@ function render() {
           <span class="text-slate-500">${c.xaiConfigured ? 'key saved' : 'no key'}</span>
         </div>
         <div class="flex items-center justify-between">
+          <span class="text-slate-400">${dot(c.atlasConfigured)} Atlas</span>
+          <span class="text-slate-500">${c.atlasConfigured ? `key saved${c.atlasProvider ? ` (${escapeHtml(c.atlasProvider)})` : ''}` : 'no key'}</span>
+        </div>
+        <div class="flex items-center justify-between">
           <span class="text-slate-400">${dot(c.modelslabConfigured)} ModelsLab</span>
           <span class="text-slate-500">${c.modelslabConfigured ? `key saved${c.modelslabProvider ? ` (${escapeHtml(c.modelslabProvider)})` : ''}` : 'no key'}</span>
         </div>
@@ -135,7 +139,7 @@ function render() {
         <h3 class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Other API keys</h3>
         <span class="text-[11px] text-slate-500">${otherProviders.length ? `${otherProviders.length} saved` : 'none saved'}</span>
       </div>
-      <p class="text-[11px] text-slate-500">Stored locally for supported providers and future helper scripts. Use <code class="text-slate-400">sdxl</code> or <code class="text-slate-400">modelslab</code> for ModelsLab; use <code class="text-slate-400">stability</code> for Stability AI.</p>
+      <p class="text-[11px] text-slate-500">Stored locally for supported providers and future helper scripts. Use <code class="text-slate-400">atlas</code> for Atlas Cloud; use <code class="text-slate-400">sdxl</code>, <code class="text-slate-400">modelslab</code>, <code class="text-slate-400">free-api</code>, or <code class="text-slate-400">vrije-api</code> for ModelsLab; use <code class="text-slate-400">stability</code> for Stability AI.</p>
       <div class="space-y-2">
         <input id="customProviderInput" type="text" autocomplete="off" placeholder="Provider name, e.g. openai"
           class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30" />
@@ -155,6 +159,20 @@ function render() {
           <div class="space-y-1.5">
             <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">ModelsLab video model</label>
             <input id="modelslabVideoModelInput" type="text" value="${escapeAttr(c.modelslabVideoModel || '')}" placeholder="wan2.2"
+              class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30" />
+          </div>
+        </div>
+      ` : ''}
+      ${c.atlasConfigured ? `
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <div class="space-y-1.5">
+            <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Atlas image model</label>
+            <input id="atlasImageModelInput" type="text" value="${escapeAttr(c.atlasImageModel || '')}" placeholder="seedream-3.0"
+              class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30" />
+          </div>
+          <div class="space-y-1.5">
+            <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Atlas video model</label>
+            <input id="atlasVideoModelInput" type="text" value="${escapeAttr(c.atlasVideoModel || '')}" placeholder="kling-v2.0"
               class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30" />
           </div>
         </div>
@@ -199,6 +217,8 @@ function render() {
   document.getElementById('geminiModelInput')?.addEventListener('change', handleSaveGeminiModel);
   document.getElementById('xaiImageModelInput')?.addEventListener('change', handleSaveXaiImageModel);
   document.getElementById('xaiVideoModelInput')?.addEventListener('change', handleSaveXaiVideoModel);
+  document.getElementById('atlasImageModelInput')?.addEventListener('change', handleSaveAtlasImageModel);
+  document.getElementById('atlasVideoModelInput')?.addEventListener('change', handleSaveAtlasVideoModel);
   document.getElementById('stabilityImageModelInput')?.addEventListener('change', handleSaveStabilityImageModel);
   document.getElementById('modelslabImageModelInput')?.addEventListener('change', handleSaveModelslabImageModel);
   document.getElementById('modelslabVideoModelInput')?.addEventListener('change', handleSaveModelslabVideoModel);
@@ -326,6 +346,26 @@ async function handleSaveXaiVideoModel(e) {
   try {
     await saveSettings({ xaiVideoModel: model });
     showToast('Grok video model saved', 'success');
+    await refresh();
+  } catch (err) { showToast(err.message || 'Could not save', 'error'); }
+}
+
+async function handleSaveAtlasImageModel(e) {
+  const model = e.target.value.trim();
+  if (!model) return;
+  try {
+    await saveSettings({ atlasImageModel: model });
+    showToast('Atlas image model saved', 'success');
+    await refresh();
+  } catch (err) { showToast(err.message || 'Could not save', 'error'); }
+}
+
+async function handleSaveAtlasVideoModel(e) {
+  const model = e.target.value.trim();
+  if (!model) return;
+  try {
+    await saveSettings({ atlasVideoModel: model });
+    showToast('Atlas video model saved', 'success');
     await refresh();
   } catch (err) { showToast(err.message || 'Could not save', 'error'); }
 }

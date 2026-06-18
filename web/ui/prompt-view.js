@@ -39,6 +39,7 @@ function engineAvailable(engineId) {
   if (engineId === 'local') return !!(config.comfyReachable && config.models?.image?.zimage_turbo);
   if (engineId === 'gemini') return !!config.geminiConfigured;
   if (engineId === 'xai') return !!config.xaiConfigured;
+  if (engineId === 'atlas') return !!config.atlasConfigured;
   if (engineId === 'sdxl') return !!(config.sdxlConfigured || config.stabilityConfigured);
   return false;
 }
@@ -49,6 +50,7 @@ export function render() {
   const localOk = engineAvailable('local');
   const geminiOk = engineAvailable('gemini');
   const xaiOk = engineAvailable('xai');
+  const atlasOk = engineAvailable('atlas');
   const sdxlOk = engineAvailable('sdxl');
 
   section.innerHTML = `
@@ -74,6 +76,7 @@ export function render() {
             ${chip(`⚡ ${ENGINES.local.title}`, 'local', 'engine', s.imageEngine === 'local', !localOk)}
             ${chip(`☁ ${ENGINES.gemini.title}`, 'gemini', 'engine', s.imageEngine === 'gemini', !geminiOk)}
             ${chip(`𝕏 ${ENGINES.xai.title}`, 'xai', 'engine', s.imageEngine === 'xai', !xaiOk)}
+            ${chip(`◆ ${ENGINES.atlas.title}`, 'atlas', 'engine', s.imageEngine === 'atlas', !atlasOk)}
             ${chip(`▣ ${ENGINES.sdxl.title}`, 'sdxl', 'engine', s.imageEngine === 'sdxl', !sdxlOk)}
           </div>
         </div>
@@ -122,6 +125,7 @@ export function render() {
 function engineHint(s) {
   if (s.imageEngine === 'gemini') return `Cloud render via ${escapeHtml(s.config.geminiModel || 'Gemini')} · uses your Google API quota`;
   if (s.imageEngine === 'xai') return `Cloud render via ${escapeHtml(s.config.xaiImageModel || 'Grok Imagine')} · uses your xAI quota`;
+  if (s.imageEngine === 'atlas') return `Cloud render via ${escapeHtml(s.config.atlasImageModel || 'seedream-3.0')} · uses your Atlas quota`;
   if (s.imageEngine === 'sdxl') return `Cloud render via ${escapeHtml(s.config.modelslabImageModel || 'sdxl')} · uses your ModelsLab quota`;
   if (!s.config.comfyReachable) return 'ComfyUI not detected — start it, or switch to a cloud engine in Settings.';
   return 'Runs locally on your GPU · free';

@@ -9,6 +9,10 @@ export const VIDEO_MODELS = {
     id: 'sdxl', title: 'ModelsLab Video', subtitle: 'Cloud · ModelsLab',
     note: 'Text-to-video through ModelsLab · uses your ModelsLab quota', defaultSeconds: 2,
   },
+  atlas: {
+    id: 'atlas', title: 'Atlas Video', subtitle: 'Cloud · Atlas Cloud',
+    note: 'Text-to-video and start images through Atlas Cloud · uses your Atlas quota', defaultSeconds: 5,
+  },
   wan22_14b: {
     id: 'wan22_14b', title: 'Wan 2.2 14B', subtitle: 'Highest quality',
     note: 'Dual-model + 4-step LoRA · slower, sharper', defaultSeconds: 2,

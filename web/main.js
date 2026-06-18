@@ -60,6 +60,7 @@ function availabilityKey(config) {
     vid: config.models?.video || {},
     gem: !!config.geminiConfigured,
     xai: !!config.xaiConfigured,
+    atlas: !!config.atlasConfigured,
     sdxl: !!(config.sdxlConfigured || config.stabilityConfigured),
     modelslab: !!config.modelslabConfigured,
   });
@@ -106,23 +107,26 @@ function reconcileEngine(config) {
   const localImg = !!(config.comfyReachable && config.models?.image?.zimage_turbo);
   const gemini = !!config.geminiConfigured;
   const xai = !!config.xaiConfigured;
+  const atlas = !!config.atlasConfigured;
   const sdxl = !!(config.sdxlConfigured || config.stabilityConfigured);
   const modelslab = !!config.modelslabConfigured;
   let engine = s.imageEngine;
-  if (engine === 'local' && !localImg) engine = xai ? 'xai' : (sdxl ? 'sdxl' : (gemini ? 'gemini' : engine));
-  if (engine === 'gemini' && !gemini) engine = localImg ? 'local' : (xai ? 'xai' : (sdxl ? 'sdxl' : engine));
-  if (engine === 'xai' && !xai) engine = localImg ? 'local' : (sdxl ? 'sdxl' : (gemini ? 'gemini' : engine));
-  if (engine === 'sdxl' && !sdxl) engine = localImg ? 'local' : (xai ? 'xai' : (gemini ? 'gemini' : engine));
+  if (engine === 'local' && !localImg) engine = xai ? 'xai' : (atlas ? 'atlas' : (sdxl ? 'sdxl' : (gemini ? 'gemini' : engine)));
+  if (engine === 'gemini' && !gemini) engine = localImg ? 'local' : (xai ? 'xai' : (atlas ? 'atlas' : (sdxl ? 'sdxl' : engine)));
+  if (engine === 'xai' && !xai) engine = localImg ? 'local' : (atlas ? 'atlas' : (sdxl ? 'sdxl' : (gemini ? 'gemini' : engine)));
+  if (engine === 'atlas' && !atlas) engine = localImg ? 'local' : (xai ? 'xai' : (sdxl ? 'sdxl' : (gemini ? 'gemini' : engine)));
+  if (engine === 'sdxl' && !sdxl) engine = localImg ? 'local' : (xai ? 'xai' : (atlas ? 'atlas' : (gemini ? 'gemini' : engine)));
   if (engine !== s.imageEngine) setState({ imageEngine: engine });
 
   let vModel = s.videoModel;
   const v = config.models?.video || {};
-  const selectedVideoAvailable = vModel === 'xai' ? xai : (vModel === 'sdxl' ? modelslab : !!v[vModel]);
+  const selectedVideoAvailable = vModel === 'xai' ? xai : (vModel === 'atlas' ? atlas : (vModel === 'sdxl' ? modelslab : !!v[vModel]));
   if (!selectedVideoAvailable) {
     if (v.wan22_14b) vModel = 'wan22_14b';
     else if (v.wan22_ti2v_5b) vModel = 'wan22_ti2v_5b';
     else if (v.wan21_1_3b) vModel = 'wan21_1_3b';
     else if (xai) vModel = 'xai';
+    else if (atlas) vModel = 'atlas';
     else if (modelslab) vModel = 'sdxl';
     else vModel = '';
   }
@@ -133,6 +137,7 @@ function updateStatus(config) {
   const localImg = !!(config.comfyReachable && config.models?.image?.zimage_turbo);
   if (localImg) setStatus(true, 'ComfyUI ready');
   else if (config.xaiConfigured) setStatus(true, 'Grok ready');
+  else if (config.atlasConfigured) setStatus(true, 'Atlas ready');
   else if (config.modelslabConfigured) setStatus(true, 'ModelsLab ready');
   else if (config.sdxlConfigured || config.stabilityConfigured) setStatus(true, 'SDXL ready');
   else if (config.geminiConfigured) setStatus(true, 'Gemini ready');
@@ -160,17 +165,18 @@ async function handleGenerateImage() {
   if (engine === 'local' && !localImg) { showToast('ComfyUI / Z-Image not available. Add a cloud key or start ComfyUI.', 'error'); return; }
   if (engine === 'gemini' && !s.config.geminiConfigured) { showToast('No Gemini key saved — open Settings to add one.', 'error'); return; }
   if (engine === 'xai' && !s.config.xaiConfigured) { showToast('No xAI key saved — open Settings to add one.', 'error'); return; }
+  if (engine === 'atlas' && !s.config.atlasConfigured) { showToast('No Atlas key saved — open Settings to add one as atlas.', 'error'); return; }
   if (engine === 'sdxl' && !(s.config.sdxlConfigured || s.config.stabilityConfigured)) { showToast('No ModelsLab/SDXL key saved — open Settings to add one.', 'error'); return; }
 
   setState({ isGenerating: true });
   PromptView.setGenerating(true);
   const count = s.imageCount;
-  const loadingLabel = engine === 'gemini' ? 'Asking Gemini…' : (engine === 'xai' ? 'Asking Grok Imagine…' : (engine === 'sdxl' ? 'Asking ModelsLab…' : 'Rendering on your GPU…'));
+  const loadingLabel = engine === 'gemini' ? 'Asking Gemini…' : (engine === 'xai' ? 'Asking Grok Imagine…' : (engine === 'atlas' ? 'Asking Atlas…' : (engine === 'sdxl' ? 'Asking ModelsLab…' : 'Rendering on your GPU…')));
   GalleryView.renderLoading(count, { label: loadingLabel });
   const started = Date.now();
 
   try {
-    const progressBase = engine === 'gemini' ? 'Gemini is painting' : (engine === 'xai' ? 'Grok Imagine is painting' : (engine === 'sdxl' ? 'ModelsLab is painting' : 'Z-Image rendering'));
+    const progressBase = engine === 'gemini' ? 'Gemini is painting' : (engine === 'xai' ? 'Grok Imagine is painting' : (engine === 'atlas' ? 'Atlas is painting' : (engine === 'sdxl' ? 'ModelsLab is painting' : 'Z-Image rendering')));
     const { results, modelTitle } = await generateImage(
       { prompt, engine, aspect: s.aspectRatio, count, steps: s.steps },
       (job) => GalleryView.updateStatus(progressLabel(job, started, progressBase)),
@@ -198,19 +204,21 @@ async function handleGenerateVideo() {
   const model = s.videoModel;
   const available = model === 'xai'
     ? !!s.config.xaiConfigured
+    : model === 'atlas'
+      ? !!s.config.atlasConfigured
     : model === 'sdxl'
       ? !!s.config.modelslabConfigured
     : !!(s.config.comfyReachable && s.config.models?.video?.[model]);
   if (!available) {
     showToast(model === 'xai'
       ? 'No xAI key saved — open Settings to add one.'
-      : (model === 'sdxl' ? 'No ModelsLab key saved — open Settings to add one.' : 'That video model is not available in ComfyUI.'),
+      : (model === 'atlas' ? 'No Atlas key saved — open Settings to add one as atlas.' : (model === 'sdxl' ? 'No ModelsLab key saved — open Settings to add one.' : 'That video model is not available in ComfyUI.')),
     'error');
     return;
   }
   const startImage = VideoPromptView.getStartImage();
-  if (startImage && !['wan22_ti2v_5b', 'xai'].includes(model)) {
-    showToast('Start images work with Wan 2.2 TI2V 5B or Grok Imagine. Select one of those first.', 'info');
+  if (startImage && !['wan22_ti2v_5b', 'xai', 'atlas'].includes(model)) {
+    showToast('Start images work with Wan 2.2 TI2V 5B, Grok Imagine, or Atlas. Select one of those first.', 'info');
     return;
   }
 
@@ -220,9 +228,9 @@ async function handleGenerateVideo() {
   const started = Date.now();
 
   try {
-    const progressBase = model === 'xai' ? 'Grok Imagine is rendering' : (model === 'sdxl' ? 'ModelsLab is rendering' : 'Wan is generating frames');
+    const progressBase = model === 'xai' ? 'Grok Imagine is rendering' : (model === 'atlas' ? 'Atlas is rendering' : (model === 'sdxl' ? 'ModelsLab is rendering' : 'Wan is generating frames'));
     const { results, modelTitle } = await generateVideo(
-      { prompt, model, aspect: s.videoAspect, seconds: s.videoSeconds, startImage },
+      { prompt, model, aspect: s.videoAspect, seconds: videoSecondsForModel(model, s.videoSeconds), startImage },
       (job) => VideoGalleryView.updateStatus(progressLabel(job, started, progressBase)),
     );
     if (!results.length) throw new Error('No video was returned.');
@@ -239,8 +247,16 @@ async function handleGenerateVideo() {
   }
 }
 
+function videoSecondsForModel(model, seconds) {
+  const parsed = Number.parseInt(seconds, 10);
+  const value = Number.isFinite(parsed) ? parsed : 2;
+  const max = model === 'xai' ? 30 : 5;
+  return Math.max(1, Math.min(max, value));
+}
+
 function videoModelTitle(model) {
   if (model === 'xai') return 'Grok Imagine Video';
+  if (model === 'atlas') return 'Atlas Video';
   if (model === 'sdxl') return 'ModelsLab Video';
   if (model === 'wan22_ti2v_5b') return 'Wan 2.2 TI2V 5B';
   if (model === 'wan22_14b') return 'Wan 2.2 14B';

@@ -28,6 +28,11 @@ function chip(label, value, group, active, disabled = false) {
   return `<button type="button" ${disabled ? 'disabled' : ''} class="vchip px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${disabled ? '' : 'cursor-pointer'} whitespace-nowrap ${base}" data-group="${group}" data-value="${value}">${label}</button>`;
 }
 
+function maxSecondsForModel(model) {
+  if (model === 'xai') return 30;
+  return 5;
+}
+
 export function init() {
   section = document.getElementById('video-prompt-section');
   if (!section) return;
@@ -38,6 +43,7 @@ export function init() {
 function modelAvailable(id) {
   const { config } = getState();
   if (id === 'xai') return !!config.xaiConfigured;
+  if (id === 'atlas') return !!config.atlasConfigured;
   if (id === 'sdxl') return !!config.modelslabConfigured;
   return !!(config.comfyReachable && config.models?.video?.[id]);
 }
@@ -49,9 +55,12 @@ export function render() {
   const wanTi2vOk = modelAvailable('wan22_ti2v_5b');
   const wan21Ok = modelAvailable('wan21_1_3b');
   const xaiOk = modelAvailable('xai');
+  const atlasOk = modelAvailable('atlas');
   const showSdxl = !!s.config.modelslabConfigured;
   const selectedImage = s._draftVideoStartImage;
   const imageError = s._draftVideoStartImageError || '';
+  const maxSeconds = maxSecondsForModel(s.videoModel);
+  const selectedSeconds = Math.min(s.videoSeconds, maxSeconds);
 
   section.innerHTML = `
     <div class="space-y-4">
@@ -70,6 +79,7 @@ export function render() {
         <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Model</label>
         <div id="modelChips" class="flex flex-wrap gap-1.5">
           ${chip(`𝕏 ${VIDEO_MODELS.xai.title}`, 'xai', 'model', s.videoModel === 'xai', !xaiOk)}
+          ${chip(`◆ ${VIDEO_MODELS.atlas.title}`, 'atlas', 'model', s.videoModel === 'atlas', !atlasOk)}
           ${showSdxl ? chip(`▣ ${VIDEO_MODELS.sdxl.title}`, 'sdxl', 'model', s.videoModel === 'sdxl', !modelAvailable('sdxl')) : ''}
           ${chip(`✨ ${VIDEO_MODELS.wan22_14b.title}`, 'wan22_14b', 'model', s.videoModel === 'wan22_14b', !wan22Ok)}
           ${chip(`🎞 ${VIDEO_MODELS.wan22_ti2v_5b.title}`, 'wan22_ti2v_5b', 'model', s.videoModel === 'wan22_ti2v_5b', !wanTi2vOk)}
@@ -98,8 +108,8 @@ export function render() {
           </div>
         </div>
         <div class="space-y-1.5 flex-1 min-w-[160px]">
-          <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Length: <span id="secOut" class="text-violet-300">${s.videoSeconds}s</span></label>
-          <input id="secRange" type="range" min="1" max="5" step="1" value="${s.videoSeconds}" class="range-violet w-full">
+          <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Length: <span id="secOut" class="text-violet-300">${selectedSeconds}s</span></label>
+          <input id="secRange" type="range" min="1" max="${maxSeconds}" step="1" value="${selectedSeconds}" class="range-violet w-full">
         </div>
       </div>
 
@@ -108,7 +118,7 @@ export function render() {
         <span id="videoBtnIcon">🎬</span><span id="videoBtnText">Create Video</span>
       </button>
 
-      <p class="text-center text-[11px] text-slate-600">${videoHint(s, wan22Ok || wanTi2vOk || wan21Ok || xaiOk)}</p>
+      <p class="text-center text-[11px] text-slate-600">${videoHint(s, wan22Ok || wanTi2vOk || wan21Ok || xaiOk || atlasOk)}</p>
     </div>
   `;
 
@@ -125,7 +135,11 @@ export function render() {
 function videoHint(s, anyModel) {
   if (s.videoModel === 'xai') {
     if (!s.config.xaiConfigured) return 'Add an xAI key in Settings to generate Grok videos.';
-    return 'Grok Imagine runs in xAI cloud · supports text-to-video and start images.';
+    return 'Grok Imagine supports up to 15s per API call; 16-30s is stitched locally from multiple Grok segments.';
+  }
+  if (s.videoModel === 'atlas') {
+    if (!s.config.atlasConfigured) return 'Add an Atlas key in Settings as atlas to generate Atlas videos.';
+    return `Atlas Cloud video via ${escapeHtml(s.config.atlasVideoModel || 'kling-v2.0')} · start images are uploaded temporarily to Atlas.`;
   }
   if (s.videoModel === 'sdxl') return 'ModelsLab text-to-video runs in the cloud · uses your ModelsLab quota.';
   if (!s.config.comfyReachable) return 'ComfyUI not detected — start it to generate video.';
@@ -137,7 +151,7 @@ function handleClick(e) {
   const c = e.target.closest('.vchip');
   if (c && !c.disabled) {
     const { group, value } = c.dataset;
-    if (group === 'model') setState({ videoModel: value });
+    if (group === 'model') setState({ videoModel: value, videoSeconds: Math.min(getState().videoSeconds, maxSecondsForModel(value)) });
     else if (group === 'vratio') setState({ videoAspect: value });
     rememberDraft();
     render();
