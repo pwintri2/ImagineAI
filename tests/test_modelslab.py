@@ -62,6 +62,46 @@ class ModelsLabTests(unittest.TestCase):
              patch.dict(os.environ, {"MODELSLAB_API_KEY": ""}):
             self.assertEqual(server.modelslab_key(), ("free-secret", "free-api"))
 
+    def test_video_payload_uses_modelslab_minimum_fps(self):
+        calls = []
+
+        def fake_request(path, payload, timeout=120):
+            calls.append((path, payload, timeout))
+            return {"status": "success", "output": ["https://example.test/video.mp4"]}
+
+        with patch.object(server, "modelslab_request_json", side_effect=fake_request), \
+             patch.object(server, "download_url_to_output", return_value=("/api/local-media?name=video.mp4", Path("video.mp4"), "video.mp4")), \
+             patch.object(server, "transcode_mp4_path_to_webm", return_value=None):
+            result = server.modelslab_generate_video("a wave", "wide", 1, "wan2.2", "secret")
+
+        self.assertEqual(result["url"], "/api/local-media?name=video.mp4")
+        self.assertEqual(calls[0][0], "/api/v6/video/text2video")
+        self.assertEqual(calls[0][1]["fps"], 16)
+        self.assertGreaterEqual(calls[0][1]["num_frames"], 16)
+
+    def test_long_modelslab_video_is_stitched_from_segments(self):
+        calls = []
+
+        def fake_clip(prompt, aspect, seconds, model, key, on_progress=None):
+            calls.append((prompt, aspect, seconds, model, key))
+            index = len(calls)
+            return {
+                "url": f"/api/local-media?name=segment{index}.webm",
+                "type": "video",
+                "mp4Url": f"/api/local-media?name=segment{index}.mp4",
+                "mp4Path": f"/tmp/segment{index}.mp4",
+            }
+
+        with patch.object(server, "modelslab_generate_video_clip", side_effect=fake_clip), \
+             patch.object(server, "concat_mp4_paths_to_webm", return_value="/api/local-media?name=stitched.webm"):
+            result = server.modelslab_generate_video("a wave", "wide", 12, "wan2.2", "secret")
+
+        self.assertEqual(result["url"], "/api/local-media?name=stitched.webm")
+        self.assertEqual(len(result["segments"]), 3)
+        self.assertNotIn("mp4Path", result["segments"][0])
+        self.assertEqual([call[2] for call in calls], [5, 5, 2])
+        self.assertIn("Segment 1 of 3", calls[0][0])
+
 
 if __name__ == "__main__":
     unittest.main()

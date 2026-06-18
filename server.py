@@ -68,6 +68,7 @@ COMFY_MISSING_HISTORY_GRACE = float(os.environ.get("IMAGINEAI_MISSING_HISTORY_GR
 XAI_VIDEO_TIMEOUT = float(os.environ.get("IMAGINEAI_XAI_VIDEO_TIMEOUT", "1200"))
 XAI_MAX_SECONDS_PER_REQUEST = 15
 XAI_MAX_STITCHED_SECONDS = 30
+MODELSLAB_MAX_STITCHED_SECONDS = 30
 ATLAS_IMAGE_TIMEOUT = float(os.environ.get("IMAGINEAI_ATLAS_IMAGE_TIMEOUT", "600"))
 ATLAS_VIDEO_TIMEOUT = float(os.environ.get("IMAGINEAI_ATLAS_VIDEO_TIMEOUT", "1200"))
 
@@ -1497,12 +1498,16 @@ def modelslab_fetch_video(request_id: object, key: str) -> dict[str, Any]:
     return modelslab_request_json(f"/api/v6/video/fetch/{urllib.parse.quote(str(request_id))}", {"key": key}, timeout=120)
 
 
-def modelslab_generate_video(prompt: str, aspect: str, seconds: object, model: str, key: str,
-                             on_progress=None) -> dict[str, Any]:
+def modelslab_public_video_result(result: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in result.items() if k != "mp4Path"}
+
+
+def modelslab_generate_video_clip(prompt: str, aspect: str, seconds: object, model: str, key: str,
+                                  on_progress=None) -> dict[str, Any]:
     width, height = ASPECT_TO_MODELSLAB_VIDEO_SIZE.get(aspect, (512, 512))
     duration = clamp_int(seconds, 2, 1, 5)
-    fps = 15
-    frames = max(8, min(25, duration * fps))
+    fps = 16
+    frames = max(16, min(25, duration * fps))
     payload = {
         "key": key,
         "model_id": model or DEFAULT_MODELSLAB_VIDEO_MODEL,
@@ -1552,7 +1557,49 @@ def modelslab_generate_video(prompt: str, aspect: str, seconds: object, model: s
             raise TimeoutError("ModelsLab video generation timed out.")
     mp4_url, mp4_path, _ = download_url_to_output(remote_url, "modelslab_video", ".mp4", timeout=600)
     webm_url = transcode_mp4_path_to_webm(mp4_path)
-    return {"url": webm_url or mp4_url, "type": "video", "mp4Url": mp4_url}
+    return {"url": webm_url or mp4_url, "type": "video", "mp4Url": mp4_url, "mp4Path": str(mp4_path)}
+
+
+def modelslab_generate_video(prompt: str, aspect: str, seconds: object, model: str, key: str,
+                             on_progress=None) -> dict[str, Any]:
+    duration = clamp_int(seconds, 2, 1, MODELSLAB_MAX_STITCHED_SECONDS)
+    if duration <= 5:
+        return modelslab_public_video_result(
+            modelslab_generate_video_clip(prompt, aspect, duration, model, key, on_progress)
+        )
+
+    remaining = duration
+    segment_lengths: list[int] = []
+    while remaining > 0:
+        segment = min(5, remaining)
+        segment_lengths.append(segment)
+        remaining -= segment
+
+    clips: list[dict[str, Any]] = []
+    total = len(segment_lengths)
+    for index, segment in enumerate(segment_lengths, start=1):
+        def segment_progress(status: str, progress: object, idx=index, total_segments=total) -> None:
+            if on_progress:
+                on_progress(f"segment {idx}/{total_segments}: {status}", progress)
+
+        clips.append(modelslab_generate_video_clip(
+            segment_prompt(prompt, index, total),
+            aspect,
+            segment,
+            model,
+            key,
+            on_progress=segment_progress,
+        ))
+
+    paths = [Path(str(clip.get("mp4Path") or "")) for clip in clips if clip.get("mp4Path")]
+    combined_url = concat_mp4_paths_to_webm(paths)
+    if not combined_url:
+        raise RuntimeError("ModelsLab generated the video segments, but ImagineAI could not stitch them into one file.")
+    return {
+        "url": combined_url,
+        "type": "video",
+        "segments": [modelslab_public_video_result(clip) for clip in clips],
+    }
 
 
 # --------------------------------------------------------------------------- #

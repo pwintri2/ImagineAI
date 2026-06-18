@@ -29,7 +29,7 @@ function chip(label, value, group, active, disabled = false) {
 }
 
 function maxSecondsForModel(model) {
-  if (model === 'xai') return 30;
+  if (['xai', 'sdxl'].includes(model)) return 30;
   return 5;
 }
 
@@ -141,7 +141,7 @@ function videoHint(s, anyModel) {
     if (!s.config.atlasConfigured) return 'Add an Atlas key in Settings as atlas to generate Atlas videos.';
     return `Atlas Cloud video via ${escapeHtml(s.config.atlasVideoModel || 'kling-v2.0')} · start images are uploaded temporarily to Atlas.`;
   }
-  if (s.videoModel === 'sdxl') return 'ModelsLab text-to-video runs in the cloud · uses your ModelsLab quota.';
+  if (s.videoModel === 'sdxl') return 'ModelsLab text-to-video runs in the cloud · 6-30s is stitched locally from multiple ModelsLab segments.';
   if (!s.config.comfyReachable) return 'ComfyUI not detected — start it to generate video.';
   if (!anyModel) return 'No Wan video model found in ComfyUI.';
   return 'Text-to-video runs locally on your GPU · can take a few minutes.';

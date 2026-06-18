@@ -250,7 +250,7 @@ async function handleGenerateVideo() {
 function videoSecondsForModel(model, seconds) {
   const parsed = Number.parseInt(seconds, 10);
   const value = Number.isFinite(parsed) ? parsed : 2;
-  const max = model === 'xai' ? 30 : 5;
+  const max = ['xai', 'sdxl'].includes(model) ? 30 : 5;
   return Math.max(1, Math.min(max, value));
 }
 

@@ -24,9 +24,8 @@ images and videos.
   stored `sdxl` or `modelslab` key.
 - Optional Stability image generation with a locally stored `stability` or
   `stability-ai` key.
-- Grok video durations up to 30 seconds in the UI; xAI accepts up to 15 seconds
-  per API request, so longer Grok videos are generated as multiple segments and
-  stitched locally.
+- Grok and ModelsLab video durations up to 30 seconds in the UI; longer cloud
+  videos are generated as multiple provider segments and stitched locally.
 - Browser UI plus Tauri desktop packaging.
 - Local history, background jobs, media proxying, and ComfyUI model detection.
 - No third-party Python packages required for the server.
