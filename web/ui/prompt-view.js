@@ -16,6 +16,7 @@ const RATIOS = [
 ];
 
 let promptInput;
+let sourceImageInput;
 let section;
 
 function chip(label, value, group, active, disabled = false) {
@@ -52,6 +53,8 @@ export function render() {
   const xaiOk = engineAvailable('xai');
   const atlasOk = engineAvailable('atlas');
   const sdxlOk = engineAvailable('sdxl');
+  const selectedImage = s._draftImageSourceImage;
+  const imageError = s._draftImageSourceImageError || '';
 
   section.innerHTML = `
     <div class="space-y-4">
@@ -67,6 +70,23 @@ export function render() {
         ${SUGGESTIONS.map((text, i) =>
           `<button type="button" class="suggestion-chip px-3 py-1 rounded-full border border-white/10 text-xs text-slate-400 hover:border-violet-500/40 hover:text-violet-300 transition-all cursor-pointer" data-index="${i}">${escapeHtml(shorten(text))}</button>`
         ).join('')}
+      </div>
+
+      <div class="space-y-2 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+        <div class="flex items-center justify-between gap-3">
+          <label for="imageSourceInput" class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Reference image</label>
+          ${selectedImage ? '<button id="clearSourceImage" type="button" class="text-xs text-slate-400 hover:text-violet-300 transition-colors">Remove</button>' : ''}
+        </div>
+        <input id="imageSourceInput" type="file" accept="image/png,image/jpeg,image/webp"
+          class="block w-full text-xs text-slate-400 file:mr-3 file:rounded-lg file:border-0 file:bg-white/10 file:px-3 file:py-2 file:text-xs file:font-medium file:text-slate-200 hover:file:bg-white/15">
+        ${selectedImage ? `
+          <div class="flex items-center gap-3">
+            <img src="${escapeAttr(selectedImage.dataUrl)}" alt="" class="h-14 w-14 shrink-0 rounded-lg object-cover border border-white/10">
+            <p class="min-w-0 text-[10px] ${imageError ? 'text-red-300' : 'text-slate-600'}">${imageError ? escapeHtml(imageError) : escapeHtml(sourceImageLabel(selectedImage))}</p>
+          </div>
+        ` : `
+          <p class="text-[10px] ${imageError ? 'text-red-300' : 'text-slate-600'}">${imageError ? escapeHtml(imageError) : escapeHtml(sourceImageLabel(selectedImage))}</p>
+        `}
       </div>
 
       <div class="flex flex-wrap items-end gap-4">
@@ -115,11 +135,13 @@ export function render() {
   `;
 
   promptInput = document.getElementById('promptInput');
+  sourceImageInput = document.getElementById('imageSourceInput');
   const range = document.getElementById('stepsRange');
   range?.addEventListener('input', () => {
     document.getElementById('stepsOut').textContent = range.value;
     setState({ steps: parseInt(range.value, 10) });
   });
+  sourceImageInput?.addEventListener('change', handleSourceImageChange);
 }
 
 function engineHint(s) {
@@ -143,6 +165,12 @@ function handleClick(e) {
     promptInput?.focus();
     return;
   }
+  if (e.target.closest('#clearSourceImage')) {
+    getState()._draftImageSourceImage = null;
+    getState()._draftImageSourceImageError = '';
+    render();
+    return;
+  }
   const sug = e.target.closest('.suggestion-chip');
   if (sug && promptInput) {
     promptInput.value = SUGGESTIONS[parseInt(sug.dataset.index, 10)] || '';
@@ -152,6 +180,57 @@ function handleClick(e) {
 
 function rememberDraft() {
   if (promptInput) getState()._draftPrompt = promptInput.value;
+}
+
+async function handleSourceImageChange() {
+  const file = sourceImageInput?.files?.[0];
+  const s = getState();
+  if (!file) {
+    s._draftImageSourceImage = null;
+    s._draftImageSourceImageError = '';
+    render();
+    return;
+  }
+  if (!file.type.startsWith('image/')) {
+    s._draftImageSourceImage = null;
+    s._draftImageSourceImageError = 'Choose a PNG, JPG, or WebP image.';
+    render();
+    return;
+  }
+  if (file.size > 24 * 1024 * 1024) {
+    s._draftImageSourceImage = null;
+    s._draftImageSourceImageError = 'Choose an image under 24 MB.';
+    render();
+    return;
+  }
+
+  s._draftImageSourceImage = {
+    dataUrl: await readFileAsDataURL(file),
+    name: file.name,
+    size: file.size,
+  };
+  s._draftImageSourceImageError = '';
+  render();
+}
+
+function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('Could not read image.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function sourceImageLabel(image) {
+  if (!image) return 'Optional. Edit or restyle an uploaded image with Z-Image, Gemini, or Grok Imagine.';
+  return `Selected: ${image.name} · ${formatBytes(image.size)}`;
+}
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes)) return '';
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 // Save in-progress text so a re-render (e.g. background config refresh) keeps it.
@@ -173,6 +252,7 @@ export function setGenerating(isLoading) {
 }
 
 export function getPrompt() { return promptInput?.value?.trim() || ''; }
+export function getSourceImage() { return getState()._draftImageSourceImage || null; }
 export function focusPrompt() { promptInput?.focus(); }
 
 function shorten(t) { return t.length > 34 ? t.slice(0, 32) + '…' : t; }

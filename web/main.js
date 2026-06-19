@@ -167,24 +167,33 @@ async function handleGenerateImage() {
   if (engine === 'xai' && !s.config.xaiConfigured) { showToast('No xAI key saved — open Settings to add one.', 'error'); return; }
   if (engine === 'atlas' && !s.config.atlasConfigured) { showToast('No Atlas key saved — open Settings to add one as atlas.', 'error'); return; }
   if (engine === 'sdxl' && !(s.config.sdxlConfigured || s.config.stabilityConfigured)) { showToast('No ModelsLab/SDXL key saved — open Settings to add one.', 'error'); return; }
+  const sourceImage = PromptView.getSourceImage();
+  if (sourceImage && !['local', 'gemini', 'xai'].includes(engine)) {
+    showToast('Reference images work with Z-Image, Gemini, or Grok Imagine. Select one of those first.', 'info');
+    return;
+  }
 
   setState({ isGenerating: true });
   PromptView.setGenerating(true);
   const count = s.imageCount;
-  const loadingLabel = engine === 'gemini' ? 'Asking Gemini…' : (engine === 'xai' ? 'Asking Grok Imagine…' : (engine === 'atlas' ? 'Asking Atlas…' : (engine === 'sdxl' ? 'Asking ModelsLab…' : 'Rendering on your GPU…')));
+  const loadingLabel = sourceImage
+    ? (engine === 'gemini' ? 'Asking Gemini to edit…' : (engine === 'xai' ? 'Asking Grok Imagine to edit…' : 'Editing on your GPU…'))
+    : (engine === 'gemini' ? 'Asking Gemini…' : (engine === 'xai' ? 'Asking Grok Imagine…' : (engine === 'atlas' ? 'Asking Atlas…' : (engine === 'sdxl' ? 'Asking ModelsLab…' : 'Rendering on your GPU…'))));
   GalleryView.renderLoading(count, { label: loadingLabel });
   const started = Date.now();
 
   try {
-    const progressBase = engine === 'gemini' ? 'Gemini is painting' : (engine === 'xai' ? 'Grok Imagine is painting' : (engine === 'atlas' ? 'Atlas is painting' : (engine === 'sdxl' ? 'ModelsLab is painting' : 'Z-Image rendering')));
+    const progressBase = sourceImage
+      ? (engine === 'gemini' ? 'Gemini is editing' : (engine === 'xai' ? 'Grok Imagine is editing' : 'Z-Image editing'))
+      : (engine === 'gemini' ? 'Gemini is painting' : (engine === 'xai' ? 'Grok Imagine is painting' : (engine === 'atlas' ? 'Atlas is painting' : (engine === 'sdxl' ? 'ModelsLab is painting' : 'Z-Image rendering'))));
     const { results, modelTitle } = await generateImage(
-      { prompt, engine, aspect: s.aspectRatio, count, steps: s.steps },
+      { prompt, engine, aspect: s.aspectRatio, count, steps: s.steps, sourceImage },
       (job) => GalleryView.updateStatus(progressLabel(job, started, progressBase)),
     );
     if (!results.length) throw new Error('No images were returned.');
     GalleryView.renderResults(results, { prompt });
     showToast('Image created!', 'success');
-    saveHistoryEntry({ prompt, modelTitle, images: results, createdAt: Date.now() });
+    saveHistoryEntry({ prompt, modelTitle, images: results, sourceImageName: sourceImage?.name || '', createdAt: Date.now() });
   } catch (err) {
     console.error('Image generation failed:', err);
     GalleryView.renderError(friendlyError(err));
@@ -250,7 +259,7 @@ async function handleGenerateVideo() {
 function videoSecondsForModel(model, seconds) {
   const parsed = Number.parseInt(seconds, 10);
   const value = Number.isFinite(parsed) ? parsed : 2;
-  const max = ['xai', 'sdxl'].includes(model) ? 30 : 5;
+  const max = ['xai', 'atlas', 'sdxl'].includes(model) ? 30 : 5;
   return Math.max(1, Math.min(max, value));
 }
 

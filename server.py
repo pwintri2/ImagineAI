@@ -48,7 +48,18 @@ DEFAULT_XAI_IMAGE_MODEL = os.environ.get("XAI_IMAGE_MODEL", "grok-imagine-image-
 DEFAULT_XAI_VIDEO_MODEL = os.environ.get("XAI_VIDEO_MODEL", "grok-imagine-video")
 XAI_BASE = os.environ.get("XAI_BASE_URL", "https://api.x.ai/v1").rstrip("/")
 DEFAULT_ATLAS_IMAGE_MODEL = os.environ.get("ATLAS_IMAGE_MODEL", os.environ.get("ATLASCLOUD_IMAGE_MODEL", "seedream-3.0"))
-DEFAULT_ATLAS_VIDEO_MODEL = os.environ.get("ATLAS_VIDEO_MODEL", os.environ.get("ATLASCLOUD_VIDEO_MODEL", "kling-v2.0"))
+DEFAULT_ATLAS_VIDEO_MODEL = os.environ.get(
+    "ATLAS_VIDEO_MODEL",
+    os.environ.get("ATLASCLOUD_VIDEO_MODEL", "alibaba/wan-2.7/text-to-video"),
+)
+DEFAULT_ATLAS_I2V_MODEL = os.environ.get(
+    "ATLAS_I2V_MODEL",
+    os.environ.get("ATLASCLOUD_I2V_MODEL", "alibaba/wan-2.7/image-to-video"),
+)
+DEFAULT_ATLAS_WAN27_RESOLUTION = os.environ.get("ATLAS_WAN27_RESOLUTION", "1080P")
+DEFAULT_ATLAS_WAN27_AUDIO = os.environ.get("ATLAS_WAN27_AUDIO", "")
+DEFAULT_ATLAS_WAN27_PROMPT_EXTEND = os.environ.get("ATLAS_WAN27_PROMPT_EXTEND", "true").strip().lower() not in ("0", "false", "no", "off")
+DEFAULT_ATLAS_WAN27_SEED = os.environ.get("ATLAS_WAN27_SEED", "-1")
 ATLAS_BASE = os.environ.get("ATLAS_BASE_URL", os.environ.get("ATLASCLOUD_BASE_URL", "https://api.atlascloud.ai/api/v1")).rstrip("/")
 DEFAULT_STABILITY_IMAGE_MODEL = os.environ.get("STABILITY_IMAGE_MODEL", "core")
 STABILITY_BASE = os.environ.get("STABILITY_BASE_URL", "https://api.stability.ai").rstrip("/")
@@ -69,6 +80,9 @@ XAI_VIDEO_TIMEOUT = float(os.environ.get("IMAGINEAI_XAI_VIDEO_TIMEOUT", "1200"))
 XAI_MAX_SECONDS_PER_REQUEST = 15
 XAI_MAX_STITCHED_SECONDS = 30
 MODELSLAB_MAX_STITCHED_SECONDS = 30
+ATLAS_MAX_SECONDS_PER_REQUEST = 10
+ATLAS_WAN27_MAX_SECONDS_PER_REQUEST = 15
+ATLAS_MAX_STITCHED_SECONDS = 30
 ATLAS_IMAGE_TIMEOUT = float(os.environ.get("IMAGINEAI_ATLAS_IMAGE_TIMEOUT", "600"))
 ATLAS_VIDEO_TIMEOUT = float(os.environ.get("IMAGINEAI_ATLAS_VIDEO_TIMEOUT", "1200"))
 
@@ -214,6 +228,19 @@ def load_settings() -> dict[str, Any]:
                     defaults.update({k: v for k, v in stored.items() if k in allowed and v is not None})
             except (json.JSONDecodeError, OSError):
                 pass
+    legacy_atlas_video_models = {
+        "kling",
+        "kling-v2",
+        "kling-v2.0",
+        "kling-v1.6-t2v-standard",
+        "kling-v1.6-i2v-standard",
+        "kwaivgi/kling-v1.6-t2v-standard",
+        "kwaivgi/kling-v1.6-i2v-standard",
+        "kwaivgi/kling-v2.5-turbo-pro/text-to-video",
+        "kwaivgi/kling-v2.5-turbo-pro/image-to-video",
+    }
+    if str(defaults.get("atlasVideoModel") or "").strip().lower() in legacy_atlas_video_models:
+        defaults["atlasVideoModel"] = DEFAULT_ATLAS_VIDEO_MODEL
     return defaults
 
 
@@ -309,13 +336,13 @@ def xai_key() -> str:
 
 
 def atlas_key() -> tuple[str, str]:
+    for env_key in ("ATLAS_API_KEY", "ATLASCLOUD_API_KEY"):
+        if os.environ.get(env_key):
+            return os.environ.get(env_key, ""), env_key
     secrets = load_secrets()
     for provider in ATLAS_SECRET_PROVIDERS:
         if secrets.get(provider):
             return secrets[provider], provider
-    for env_key in ("ATLAS_API_KEY", "ATLASCLOUD_API_KEY"):
-        if os.environ.get(env_key):
-            return os.environ.get(env_key, ""), "env"
     return "", "env"
 
 
@@ -519,6 +546,8 @@ def build_zimage_graph(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
     steps = clamp_int(data.get("steps"), 8, 1, 30)
     cfg = clamp_float(data.get("cfg"), 1.0, 0.0, 12.0)
     batch_size = clamp_int(data.get("batch_size"), 1, 1, 4)
+    source_image = str(data.get("source_image") or "").strip()
+    image_strength = clamp_float(data.get("image_strength"), 0.65, 0.05, 1.0)
 
     graph: dict[str, dict[str, Any]] = {
         "30": {"class_type": "CLIPLoader",
@@ -542,6 +571,19 @@ def build_zimage_graph(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
         graph["33"] = {"class_type": "CLIPTextEncode", "inputs": {"clip": ["30", 0], "text": negative}}
     else:
         graph["33"] = {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["27", 0]}}
+    if source_image:
+        graph["34"] = {"class_type": "LoadImage", "inputs": {"image": source_image}}
+        graph["35"] = {"class_type": "ImageScale",
+                       "inputs": {"image": ["34", 0], "upscale_method": "bicubic",
+                                  "width": width, "height": height, "crop": "center"}}
+        graph["36"] = {"class_type": "VAEEncode", "inputs": {"pixels": ["35", 0], "vae": ["29", 0]}}
+        graph["3"]["inputs"]["latent_image"] = ["36", 0]
+        graph["3"]["inputs"]["denoise"] = image_strength
+        graph.pop("13", None)
+        if batch_size > 1:
+            graph["37"] = {"class_type": "RepeatLatentBatch",
+                           "inputs": {"samples": ["36", 0], "amount": batch_size}}
+            graph["3"]["inputs"]["latent_image"] = ["37", 0]
     return graph
 
 
@@ -699,19 +741,35 @@ def decode_image_data_url(data_url: object) -> tuple[str, bytes]:
     return ext, raw
 
 
-def save_start_image_for_comfy(data_url: object, original_name: object = "") -> str:
+def save_uploaded_image_for_comfy(data_url: object, original_name: object = "", prefix: str = "upload") -> str:
     if not isinstance(data_url, str) or not data_url.strip():
         return ""
 
     ext, raw = decode_image_data_url(data_url)
 
-    words = re.findall(r"[A-Za-z0-9]+", str(original_name or "start"))[:4]
-    slug = "_".join(words) or "start"
+    words = re.findall(r"[A-Za-z0-9]+", str(original_name or prefix or "upload"))[:4]
+    slug = "_".join(words) or prefix or "upload"
+    safe_prefix_value = re.sub(r"[^A-Za-z0-9_]+", "_", prefix or "upload").strip("_") or "upload"
     upload_dir = COMFY_INPUT_DIR / "imagineai"
     upload_dir.mkdir(parents=True, exist_ok=True)
-    filename = f"i2v_{int(now())}_{uuid.uuid4().hex[:8]}_{slug}.{ext}"
+    filename = f"{safe_prefix_value}_{int(now())}_{uuid.uuid4().hex[:8]}_{slug}.{ext}"
     (upload_dir / filename).write_bytes(raw)
     return f"imagineai/{filename}"
+
+
+def save_start_image_for_comfy(data_url: object, original_name: object = "") -> str:
+    return save_uploaded_image_for_comfy(data_url, original_name, "i2v")
+
+
+def save_source_image_for_comfy(data_url: object, original_name: object = "") -> str:
+    return save_uploaded_image_for_comfy(data_url, original_name, "img2img")
+
+
+def image_data_url_for_provider(data_url: object) -> tuple[str, str, bytes]:
+    ext, raw = decode_image_data_url(data_url)
+    mime = "image/jpeg" if ext == "jpg" else f"image/{ext}"
+    b64 = base64.b64encode(raw).decode("ascii")
+    return mime, b64, raw
 
 
 def output_url(name: str) -> str:
@@ -779,10 +837,20 @@ def content_disposition_attachment(filename: str) -> str:
 # --------------------------------------------------------------------------- #
 # Gemini cloud image fallback
 # --------------------------------------------------------------------------- #
-def gemini_generate_image(prompt: str, aspect: str, model: str, key: str) -> list[str]:
+def gemini_generate_image(prompt: str, aspect: str, model: str, key: str,
+                          source_image: object = "") -> list[str]:
     """Returns a list of local /api/local-media URLs for generated images."""
     url = f"{GEMINI_BASE}/models/{urllib.parse.quote(model)}:generateContent"
     ratio = ASPECT_TO_GEMINI.get(aspect, "1:1")
+    source_parts: list[dict[str, Any]] = []
+    if isinstance(source_image, str) and source_image.strip():
+        mime, b64, raw = image_data_url_for_provider(source_image)
+        if len(raw) > 20 * 1024 * 1024:
+            raise ValueError("Gemini image edits need an uploaded image under 20 MB.")
+        source_parts = [
+            {"inlineData": {"mimeType": mime, "data": b64}},
+            {"inline_data": {"mime_type": mime, "data": b64}},
+        ]
 
     def post(payload: dict[str, Any]) -> dict[str, Any]:
         body = json.dumps(payload).encode("utf-8")
@@ -792,16 +860,24 @@ def gemini_generate_image(prompt: str, aspect: str, model: str, key: str) -> lis
         with urllib.request.urlopen(req, timeout=120) as response:
             return json.loads(response.read().decode("utf-8") or "{}")
 
-    base = {"contents": [{"parts": [{"text": prompt}]}]}
+    def base_payload(source_part: dict[str, Any] | None = None) -> dict[str, Any]:
+        parts = [{"text": prompt}]
+        if source_part:
+            parts.append(source_part)
+        return {"contents": [{"parts": parts}]}
+
+    bases = [base_payload(part) for part in source_parts] or [base_payload()]
     # The exact aspect-ratio nesting changed across Gemini API revisions; try the
     # richest payload first and fall back to simpler ones on a 400 so the cloud
     # fallback still returns an image whatever version the key is wired to.
-    variants = [
-        {**base, "generationConfig": {"responseModalities": ["IMAGE"], "imageConfig": {"aspectRatio": ratio}}},
-        {**base, "generationConfig": {"responseModalities": ["IMAGE"], "aspectRatio": ratio}},
-        {**base, "generationConfig": {"responseModalities": ["IMAGE"]}},
-        base,
-    ]
+    variants: list[dict[str, Any]] = []
+    for base in bases:
+        variants.extend([
+            {**base, "generationConfig": {"responseModalities": ["IMAGE"], "imageConfig": {"aspectRatio": ratio}}},
+            {**base, "generationConfig": {"responseModalities": ["IMAGE"], "aspectRatio": ratio}},
+            {**base, "generationConfig": {"responseModalities": ["IMAGE"]}},
+            base,
+        ])
     data: dict[str, Any] | None = None
     last_error: RuntimeError | None = None
     for payload in variants:
@@ -873,15 +949,23 @@ def xai_request_json(path: str, key: str, payload: dict[str, Any] | None = None,
     return json.loads(raw)
 
 
-def xai_generate_image(prompt: str, aspect: str, count: int, model: str, key: str) -> list[str]:
-    payload = {
+def xai_generate_image(prompt: str, aspect: str, count: int, model: str, key: str,
+                       source_image: object = "") -> list[str]:
+    has_source_image = isinstance(source_image, str) and bool(source_image.strip())
+    payload: dict[str, Any] = {
         "model": model,
         "prompt": prompt,
-        "n": clamp_int(count, 1, 1, 10),
-        "aspect_ratio": ASPECT_TO_XAI.get(aspect, "1:1"),
-        "response_format": "b64_json",
     }
-    data = xai_request_json("/images/generations", key, payload, method="POST", timeout=240)
+    path = "/images/generations"
+    if has_source_image:
+        decode_image_data_url(source_image)
+        payload["image"] = {"url": source_image, "type": "image_url"}
+        path = "/images/edits"
+    else:
+        payload["n"] = clamp_int(count, 1, 1, 10)
+        payload["response_format"] = "b64_json"
+        payload["aspect_ratio"] = ASPECT_TO_XAI.get(aspect, "1:1")
+    data = xai_request_json(path, key, payload, method="POST", timeout=240)
     urls: list[str] = []
     for item in data.get("data", []) or []:
         if not isinstance(item, dict):
@@ -1015,11 +1099,18 @@ class AtlasHTTPError(RuntimeError):
         self.message = message
 
 
+class AtlasModelAccessError(RuntimeError):
+    def __init__(self, model_id: str, message: str) -> None:
+        super().__init__(message)
+        self.model_id = model_id
+
+
 def atlas_request_json(path: str, key: str, payload: dict[str, Any] | None = None,
                        method: str = "GET", timeout: float = 120) -> dict[str, Any]:
     body = None if payload is None else json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(f"{ATLAS_BASE}{path}", data=body, method=method)
     req.add_header("Authorization", f"Bearer {key}")
+    req.add_header("User-Agent", "ImagineAI/1.0")
     if payload is not None:
         req.add_header("Content-Type", "application/json")
     try:
@@ -1035,7 +1126,7 @@ def atlas_request_json(path: str, key: str, payload: dict[str, Any] | None = Non
                 if isinstance(err, dict):
                     message = str(err.get("message") or err.get("code") or message)
                 else:
-                    message = str(parsed.get("message") or parsed.get("detail") or err or message)
+                    message = str(parsed.get("message") or parsed.get("msg") or parsed.get("detail") or err or message)
         except (json.JSONDecodeError, TypeError):
             pass
         raise AtlasHTTPError(exc.code, message) from exc
@@ -1183,18 +1274,131 @@ def atlas_upload_media(data_url: object, key: str, original_name: object = "") -
     return url
 
 
-def atlas_generate_video(prompt: str, aspect: str, seconds: object, model: str, key: str,
-                         start_image: object = "", start_image_name: object = "", on_progress=None) -> dict[str, Any]:
-    model_id = model or DEFAULT_ATLAS_VIDEO_MODEL
+def atlas_video_model_id(model: str, has_start_image: bool) -> str:
+    raw = (model or "").strip() or DEFAULT_ATLAS_VIDEO_MODEL
+    legacy_aliases = {
+        "kling": DEFAULT_ATLAS_I2V_MODEL if has_start_image else DEFAULT_ATLAS_VIDEO_MODEL,
+        "kling-v2.0": DEFAULT_ATLAS_I2V_MODEL if has_start_image else DEFAULT_ATLAS_VIDEO_MODEL,
+        "kling-v2": DEFAULT_ATLAS_I2V_MODEL if has_start_image else DEFAULT_ATLAS_VIDEO_MODEL,
+        "wan-2.7": DEFAULT_ATLAS_I2V_MODEL if has_start_image else DEFAULT_ATLAS_VIDEO_MODEL,
+        "wan2.7": DEFAULT_ATLAS_I2V_MODEL if has_start_image else DEFAULT_ATLAS_VIDEO_MODEL,
+        "wan 2.7": DEFAULT_ATLAS_I2V_MODEL if has_start_image else DEFAULT_ATLAS_VIDEO_MODEL,
+        "alibaba/wan-2.7": DEFAULT_ATLAS_I2V_MODEL if has_start_image else DEFAULT_ATLAS_VIDEO_MODEL,
+    }
+    model_id = legacy_aliases.get(raw.lower(), raw)
+    if has_start_image and model_id == DEFAULT_ATLAS_VIDEO_MODEL:
+        return DEFAULT_ATLAS_I2V_MODEL
+    if has_start_image and model_id.endswith("/text-to-video"):
+        return f"{model_id.rsplit('/', 1)[0]}/image-to-video"
+    if not has_start_image and model_id.endswith("/image-to-video"):
+        return f"{model_id.rsplit('/', 1)[0]}/text-to-video"
+    return model_id
+
+
+def atlas_video_aspect(aspect: str) -> str:
+    return {"wide": "16:9", "tall": "9:16", "square": "1:1"}.get(aspect, "")
+
+
+def atlas_wan27_ratio(aspect: str) -> str:
+    return ASPECT_TO_GEMINI.get(aspect, "16:9")
+
+
+def atlas_wan27_resolution() -> str:
+    value = str(DEFAULT_ATLAS_WAN27_RESOLUTION or "1080P").strip().upper()
+    return value if value in ("720P", "1080P", "1080P-SR", "1440P-SR") else "1080P"
+
+
+def atlas_wan27_negative_prompt() -> str:
+    return str(DEFAULT_NEGATIVE_VIDEO or "")[:500]
+
+
+def atlas_wan27_seed() -> int:
+    return clamp_int(DEFAULT_ATLAS_WAN27_SEED, -1, -1, 2147483647)
+
+
+def atlas_is_wan27_model(model_id: str) -> bool:
+    return "/wan-2.7/" in (model_id or "").lower()
+
+
+def atlas_public_video_result(result: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in result.items() if k != "mp4Path"}
+
+
+def atlas_video_segment_lengths(seconds: object, model_id: str = "") -> list[int]:
+    if atlas_is_wan27_model(model_id):
+        remaining = clamp_int(seconds, 5, 2, ATLAS_MAX_STITCHED_SECONDS)
+        segments: list[int] = []
+        while remaining > 0:
+            segment = min(ATLAS_WAN27_MAX_SECONDS_PER_REQUEST, remaining)
+            if remaining - segment == 1:
+                segment -= 1
+            segments.append(segment)
+            remaining -= segment
+        return segments
+
+    remaining = clamp_int(seconds, 5, 1, ATLAS_MAX_STITCHED_SECONDS)
+    segments: list[int] = []
+    while remaining > 0:
+        if remaining > ATLAS_MAX_SECONDS_PER_REQUEST:
+            segment = ATLAS_MAX_SECONDS_PER_REQUEST
+        else:
+            segment = 10 if remaining >= 8 else 5
+        segments.append(segment)
+        remaining -= segment
+    return segments
+
+
+def atlas_generate_video_clip(prompt: str, aspect: str, seconds: object, model: str, key: str,
+                              start_image: object = "", start_image_name: object = "", on_progress=None) -> dict[str, Any]:
+    has_start_image = isinstance(start_image, str) and bool(start_image.strip())
+    model_id = atlas_video_model_id(model, has_start_image)
     payload: dict[str, Any] = {
         "model": model_id,
         "prompt": prompt,
     }
-    if isinstance(start_image, str) and start_image.strip():
+    payload["duration"] = atlas_video_segment_lengths(seconds, model_id)[0]
+    if atlas_is_wan27_model(model_id):
+        payload.update({
+            "negative_prompt": atlas_wan27_negative_prompt(),
+            "resolution": atlas_wan27_resolution(),
+            "ratio": atlas_wan27_ratio(aspect),
+            "prompt_extend": DEFAULT_ATLAS_WAN27_PROMPT_EXTEND,
+            "seed": atlas_wan27_seed(),
+        })
+        audio = str(DEFAULT_ATLAS_WAN27_AUDIO or "").strip()
+        if audio:
+            payload["audio"] = audio
+    else:
+        aspect_ratio = atlas_video_aspect(aspect)
+        if aspect_ratio and not has_start_image:
+            payload["aspect_ratio"] = aspect_ratio
+    if has_start_image:
         if on_progress:
             on_progress("uploading image")
-        payload["image_url"] = atlas_upload_media(start_image, key, start_image_name)
-    started = atlas_request_json("/model/generateVideo", key, payload, method="POST", timeout=120)
+        payload["image"] = atlas_upload_media(start_image, key, start_image_name)
+    try:
+        started = atlas_request_json("/model/generateVideo", key, payload, method="POST", timeout=120)
+    except AtlasHTTPError as exc:
+        if exc.code == 403:
+            reason = str(exc.message or "").strip()
+            if "coding plan" in reason.lower() and "not support" in reason.lower():
+                detail = (
+                    f"Atlas returned 403 for {model_id}: this Atlas Coding Plan token does not support video generation. "
+                    "There is no Atlas video model this token can use here; add a full Atlas Cloud API key/plan, "
+                    "or use ModelsLab, xAI, or local Wan for video."
+                )
+            else:
+                detail = (
+                    f"Atlas rejected video generation with 403 for model {model_id}. "
+                    "Check Atlas credits/model access, or try another Atlas video model in Settings."
+                )
+            if reason:
+                detail = f"{detail} Atlas said: {reason}"
+            raise AtlasModelAccessError(
+                model_id,
+                detail,
+            ) from exc
+        raise
     request_id = atlas_prediction_id(started)
     result = atlas_poll_result(request_id, key, on_progress=on_progress, timeout=ATLAS_VIDEO_TIMEOUT, interval=5)
     outputs = atlas_extract_outputs(result)
@@ -1203,7 +1407,57 @@ def atlas_generate_video(prompt: str, aspect: str, seconds: object, model: str, 
         raise RuntimeError("Atlas video finished without a downloadable video URL.")
     mp4_url, mp4_path, _ = download_url_to_output(remote_url, "atlas_video", ".mp4", timeout=900)
     webm_url = transcode_mp4_path_to_webm(mp4_path)
-    return {"url": webm_url or mp4_url, "type": "video", "mp4Url": mp4_url}
+    return {"url": webm_url or mp4_url, "type": "video", "mp4Url": mp4_url, "mp4Path": str(mp4_path), "model": model_id}
+
+
+def atlas_generate_video_with_model(prompt: str, aspect: str, seconds: object, model_id: str, key: str,
+                                    start_image: object = "", start_image_name: object = "", on_progress=None) -> dict[str, Any]:
+    segment_lengths = atlas_video_segment_lengths(seconds, model_id)
+    if len(segment_lengths) == 1:
+        return atlas_public_video_result(
+            atlas_generate_video_clip(prompt, aspect, segment_lengths[0], model_id, key, start_image, start_image_name, on_progress)
+        )
+
+    clips: list[dict[str, Any]] = []
+    total = len(segment_lengths)
+    for index, segment in enumerate(segment_lengths, start=1):
+        def segment_progress(status: str, idx=index, total_segments=total) -> None:
+            if on_progress:
+                on_progress(f"segment {idx}/{total_segments}: {status}")
+
+        clips.append(atlas_generate_video_clip(
+            segment_prompt(prompt, index, total),
+            aspect,
+            segment,
+            model_id,
+            key,
+            start_image if index == 1 else "",
+            start_image_name if index == 1 else "",
+            on_progress=segment_progress,
+        ))
+
+    paths = [Path(str(clip.get("mp4Path") or "")) for clip in clips if clip.get("mp4Path")]
+    combined_url = concat_mp4_paths_to_webm(paths)
+    if not combined_url:
+        raise RuntimeError("Atlas generated the video segments, but ImagineAI could not stitch them into one file.")
+    return {
+        "url": combined_url,
+        "type": "video",
+        "model": clips[0].get("model") or model_id,
+        "segments": [atlas_public_video_result(clip) for clip in clips],
+    }
+
+
+def atlas_generate_video(prompt: str, aspect: str, seconds: object, model: str, key: str,
+                         start_image: object = "", start_image_name: object = "", on_progress=None) -> dict[str, Any]:
+    has_start_image = isinstance(start_image, str) and bool(start_image.strip())
+    model_id = atlas_video_model_id(model, has_start_image)
+    return atlas_generate_video_with_model(
+        prompt, aspect, seconds, model_id, key,
+        start_image=start_image,
+        start_image_name=start_image_name,
+        on_progress=on_progress,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -1634,6 +1888,8 @@ def run_image_job(job_id: str, payload: dict[str, Any]) -> None:
     engine = str(payload.get("engine") or "local").lower()
     aspect = str(payload.get("aspect") or "square")
     count = clamp_int(payload.get("count"), 1, 1, 4)
+    source_image = payload.get("sourceImage") or ""
+    source_image_name = payload.get("sourceImageName") or ""
     settings = load_settings()
     try:
         if engine == "gemini":
@@ -1646,7 +1902,7 @@ def run_image_job(job_id: str, payload: dict[str, Any]) -> None:
             for _ in range(count):
                 if len(urls) >= count:
                     break
-                urls.extend(gemini_generate_image(prompt, aspect, model, key))
+                urls.extend(gemini_generate_image(prompt, aspect, model, key, source_image=source_image))
             urls = urls[:count]  # never return more than requested
             update_job(job_id, status="done",
                        results=[{"url": u, "type": "image"} for u in urls],
@@ -1659,13 +1915,15 @@ def run_image_job(job_id: str, payload: dict[str, Any]) -> None:
             key = xai_key()
             if not key:
                 raise RuntimeError("No xAI API key saved. Add one in Settings.")
-            urls = xai_generate_image(prompt, aspect, count, model, key)[:count]
+            urls = xai_generate_image(prompt, aspect, count, model, key, source_image=source_image)[:count]
             update_job(job_id, status="done",
                        results=[{"url": u, "type": "image"} for u in urls],
                        meta={"engine": "xai", "modelTitle": "Grok Imagine", "model": model})
             return
 
         if engine in ("atlas", "atlascloud", "atlas-cloud"):
+            if isinstance(source_image, str) and source_image.strip():
+                raise RuntimeError("Atlas image reference uploads are not wired for this image engine yet. Use Z-Image, Gemini, or Grok Imagine for image edits.")
             model = str(payload.get("atlasImageModel") or settings.get("atlasImageModel") or DEFAULT_ATLAS_IMAGE_MODEL)
             key, provider = atlas_key()
             update_job(job_id, status="running", meta={"engine": "atlas", "modelTitle": model, "provider": provider})
@@ -1685,6 +1943,8 @@ def run_image_job(job_id: str, payload: dict[str, Any]) -> None:
             return
 
         if engine in ("sdxl", "stability", "stability-ai"):
+            if isinstance(source_image, str) and source_image.strip():
+                raise RuntimeError("SDXL reference uploads are not wired for this image engine yet. Use Z-Image, Gemini, or Grok Imagine for image edits.")
             key, provider = modelslab_key()
             if key:
                 model = str(payload.get("modelslabImageModel") or settings.get("modelslabImageModel")
@@ -1710,6 +1970,8 @@ def run_image_job(job_id: str, payload: dict[str, Any]) -> None:
             return
 
         if engine in ("modelslab", "models-lab", "stable-diffusion-api"):
+            if isinstance(source_image, str) and source_image.strip():
+                raise RuntimeError("ModelsLab reference uploads are not wired for this image engine yet. Use Z-Image, Gemini, or Grok Imagine for image edits.")
             model = str(payload.get("modelslabImageModel") or settings.get("modelslabImageModel")
                         or DEFAULT_MODELSLAB_IMAGE_MODEL)
             key, provider = modelslab_key()
@@ -1725,12 +1987,15 @@ def run_image_job(job_id: str, payload: dict[str, Any]) -> None:
 
         # local Z-Image Turbo
         width, height = ASPECT_TO_SIZE.get(aspect, (1024, 1024))
+        comfy_source_image = save_source_image_for_comfy(source_image, source_image_name)
         graph = build_zimage_graph({
             "prompt": prompt,
             "negative_prompt": payload.get("negativePrompt", DEFAULT_NEGATIVE_IMAGE),
             "width": width, "height": height, "batch_size": count,
             "steps": payload.get("steps", 8), "cfg": payload.get("cfg", 1.0),
             "seed": payload.get("seed"),
+            "source_image": comfy_source_image,
+            "image_strength": payload.get("imageStrength", 0.65),
         })
         update_job(job_id, status="running", meta={"engine": "local", "modelTitle": "Z-Image Turbo"})
         with COMFY_LOCK:
@@ -1805,9 +2070,11 @@ def run_video_job(job_id: str, payload: dict[str, Any]) -> None:
                 start_image_name=payload.get("startImageName") or "",
                 on_progress=on_atlas_progress,
             )
+            actual_atlas_model = str(result.get("model") or atlas_model)
+            done_meta = {"engine": "atlas", "modelTitle": "Atlas Video", "model": actual_atlas_model,
+                         "provider": provider}
             update_job(job_id, status="done", results=[result],
-                       meta={"engine": "atlas", "modelTitle": "Atlas Video", "model": atlas_model,
-                             "provider": provider})
+                       meta=done_meta)
             return
 
         if model == "xai":

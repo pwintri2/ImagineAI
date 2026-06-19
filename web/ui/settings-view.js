@@ -172,7 +172,7 @@ function render() {
           </div>
           <div class="space-y-1.5">
             <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Atlas video model</label>
-            <input id="atlasVideoModelInput" type="text" value="${escapeAttr(c.atlasVideoModel || '')}" placeholder="kling-v2.0"
+            <input id="atlasVideoModelInput" type="text" value="${escapeAttr(c.atlasVideoModel || '')}" placeholder="alibaba/wan-2.7/text-to-video"
               class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30" />
           </div>
         </div>

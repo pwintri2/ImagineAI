@@ -12,13 +12,15 @@ export const ENGINES = {
  * Generate image(s). Returns { results: [{url,type}], meta, prompt }.
  * onProgress(job) is called on each poll tick.
  */
-export async function generateImage({ prompt, engine, aspect, count, steps }, onProgress) {
+export async function generateImage({ prompt, engine, aspect, count, steps, sourceImage }, onProgress) {
   const { jobId } = await startImageJob({
     prompt,
     engine,
     aspect,
     count,
     steps,
+    sourceImage: sourceImage?.dataUrl || '',
+    sourceImageName: sourceImage?.name || '',
   });
   const job = await pollJob(jobId, { onTick: onProgress });
   return {

@@ -11,7 +11,7 @@ export const VIDEO_MODELS = {
   },
   atlas: {
     id: 'atlas', title: 'Atlas Video', subtitle: 'Cloud · Atlas Cloud',
-    note: 'Text-to-video and start images through Atlas Cloud · uses your Atlas quota', defaultSeconds: 5,
+    note: 'Wan 2.7 through Atlas Cloud · up to 30s stitched locally', defaultSeconds: 5,
   },
   wan22_14b: {
     id: 'wan22_14b', title: 'Wan 2.2 14B', subtitle: 'Highest quality',
