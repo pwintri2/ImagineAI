@@ -29,7 +29,7 @@ function chip(label, value, group, active, disabled = false) {
 }
 
 function maxSecondsForModel(model) {
-  if (['xai', 'sdxl'].includes(model)) return 30;
+  if (['xai', 'atlas', 'sdxl'].includes(model)) return 30;
   return 5;
 }
 
@@ -139,7 +139,7 @@ function videoHint(s, anyModel) {
   }
   if (s.videoModel === 'atlas') {
     if (!s.config.atlasConfigured) return 'Add an Atlas key in Settings as atlas to generate Atlas videos.';
-    return `Atlas Cloud video via ${escapeHtml(s.config.atlasVideoModel || 'kling-v2.0')} · start images are uploaded temporarily to Atlas.`;
+    return `Atlas Cloud video via ${escapeHtml(s.config.atlasVideoModel || 'alibaba/wan-2.7/text-to-video')} · 16-30s is stitched locally from multiple Wan 2.7 segments.`;
   }
   if (s.videoModel === 'sdxl') return 'ModelsLab text-to-video runs in the cloud · 6-30s is stitched locally from multiple ModelsLab segments.';
   if (!s.config.comfyReachable) return 'ComfyUI not detected — start it to generate video.';
@@ -203,10 +203,12 @@ async function handleStartImageChange() {
     size: file.size,
   };
   s._draftVideoStartImageError = '';
-  if (!['wan22_ti2v_5b', 'xai'].includes(s.videoModel) && modelAvailable('wan22_ti2v_5b')) {
+  if (!['wan22_ti2v_5b', 'xai', 'atlas'].includes(s.videoModel) && modelAvailable('wan22_ti2v_5b')) {
     setState({ videoModel: 'wan22_ti2v_5b' });
-  } else if (!['wan22_ti2v_5b', 'xai'].includes(s.videoModel) && modelAvailable('xai')) {
+  } else if (!['wan22_ti2v_5b', 'xai', 'atlas'].includes(s.videoModel) && modelAvailable('xai')) {
     setState({ videoModel: 'xai' });
+  } else if (!['wan22_ti2v_5b', 'xai', 'atlas'].includes(s.videoModel) && modelAvailable('atlas')) {
+    setState({ videoModel: 'atlas' });
   }
   render();
 }
@@ -221,7 +223,7 @@ function readFileAsDataURL(file) {
 }
 
 function startImageLabel(image) {
-  if (!image) return 'Optional. Add one to animate a still image with Wan 2.2 TI2V 5B or Grok Imagine.';
+  if (!image) return 'Optional. Add one to animate a still image with Wan 2.2 TI2V 5B, Grok Imagine, or Atlas.';
   return `Selected: ${image.name} · ${formatBytes(image.size)}`;
 }
 
