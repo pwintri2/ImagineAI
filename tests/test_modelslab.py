@@ -102,6 +102,25 @@ class ModelsLabTests(unittest.TestCase):
         self.assertEqual([call[2] for call in calls], [5, 5, 2])
         self.assertIn("Segment 1 of 3", calls[0][0])
 
+    def test_long_modelslab_video_returns_segments_when_stitching_is_unavailable(self):
+        def fake_clip(prompt, aspect, seconds, model, key, on_progress=None):
+            index = int(prompt.split("Segment ", 1)[1].split(" ", 1)[0])
+            return {
+                "url": f"/api/local-media?name=modelslab-segment{index}.webm",
+                "type": "video",
+                "mp4Url": f"/api/local-media?name=modelslab-segment{index}.mp4",
+                "mp4Path": f"/tmp/modelslab-segment{index}.mp4",
+            }
+
+        with patch.object(server, "modelslab_generate_video_clip", side_effect=fake_clip), \
+             patch.object(server, "concat_mp4_paths_to_webm", return_value=None):
+            result = server.modelslab_generate_video("a wave", "wide", 12, "wan2.2", "secret")
+
+        self.assertEqual(result["stitchStatus"], "segments")
+        self.assertEqual(result["url"], "/api/local-media?name=modelslab-segment1.webm")
+        self.assertEqual(len(result["segments"]), 3)
+        self.assertNotIn("mp4Path", result["segments"][0])
+
 
 if __name__ == "__main__":
     unittest.main()

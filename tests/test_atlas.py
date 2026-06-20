@@ -235,6 +235,30 @@ class AtlasTests(unittest.TestCase):
         self.assertEqual(calls[0][6], "start.png")
         self.assertEqual([call[5] for call in calls[1:]], [""])
 
+    def test_long_atlas_video_returns_segments_when_stitching_is_unavailable(self):
+        def fake_clip(prompt, aspect, seconds, model, key, start_image="", start_image_name="", on_progress=None):
+            index = 1 if seconds == 15 and start_image else 2
+            return {
+                "url": f"/api/local-media?name=atlas-segment{index}.webm",
+                "type": "video",
+                "mp4Url": f"/api/local-media?name=atlas-segment{index}.mp4",
+                "mp4Path": f"/tmp/atlas-segment{index}.mp4",
+                "model": "alibaba/wan-2.7/image-to-video",
+            }
+
+        with patch.object(server, "atlas_generate_video_clip", side_effect=fake_clip), \
+             patch.object(server, "concat_mp4_paths_to_webm", return_value=None):
+            result = server.atlas_generate_video(
+                "a long camera move", "wide", 30, "kling-v2.0", "secret",
+                start_image="data:image/png;base64,abc", start_image_name="start.png",
+            )
+
+        self.assertEqual(result["stitchStatus"], "segments")
+        self.assertEqual(result["url"], "/api/local-media?name=atlas-segment1.webm")
+        self.assertEqual(result["model"], "alibaba/wan-2.7/image-to-video")
+        self.assertEqual(len(result["segments"]), 2)
+        self.assertNotIn("mp4Path", result["segments"][0])
+
 
 if __name__ == "__main__":
     unittest.main()

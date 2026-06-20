@@ -29,6 +29,8 @@ export function renderResults(videos, meta = {}) {
   const baseName = defaultBaseName(meta.prompt, 'imagineai-video');
   const downloadUrl = video.mp4Url || video.url;
   const downloadExt = extensionFromUrl(downloadUrl, video.mp4Url ? '.mp4' : '.webm');
+  const segments = segmentList(video);
+  const segmentFallback = video.stitchStatus === 'segments' && segments.length > 1;
   galleryEl.innerHTML = `
     <div class="fade-in space-y-4">
       <div class="video-card group relative rounded-2xl overflow-hidden border border-white/10 bg-white/5 aspect-video">
@@ -47,6 +49,7 @@ export function renderResults(videos, meta = {}) {
             class="shrink-0 rounded-lg border border-white/10 bg-white/10 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-white/15">Save</button>
         </div>
       </div>
+      ${segmentFallback ? renderSegmentFallback(segments, baseName, video.stitchWarning) : ''}
       <div class="flex items-center gap-2 text-[11px] text-slate-600 justify-center">
         <span>${escapeHtml(meta.modelTitle || '')}</span>
       </div>
@@ -86,7 +89,7 @@ function handleClick(e) {
   const btn = e.target.closest('[data-save-video]');
   if (!btn) return;
   const input = document.getElementById('videoFileName');
-  downloadMedia(btn.dataset.url || '', input?.value || 'imagineai-video', btn.dataset.ext || '.mp4');
+  downloadMedia(btn.dataset.url || '', btn.dataset.name || input?.value || 'imagineai-video', btn.dataset.ext || '.mp4');
 }
 
 export function renderError(message) {
@@ -114,6 +117,31 @@ function sourceTag(url, forcedType = '') {
   if (!url) return '';
   const type = forcedType || mediaTypeFromUrl(url);
   return `<source src="${escapeAttr(url)}"${type ? ` type="${escapeAttr(type)}"` : ''}>`;
+}
+
+function segmentList(video) {
+  return Array.isArray(video?.segments) ? video.segments.filter((segment) => segment?.url || segment?.mp4Url) : [];
+}
+
+function renderSegmentFallback(segments, baseName, warning) {
+  const items = segments.map((segment, index) => {
+    const url = segment.mp4Url || segment.url;
+    const ext = extensionFromUrl(url, segment.mp4Url ? '.mp4' : '.webm');
+    const name = `${baseName}-part-${index + 1}`;
+    return `
+      <div class="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
+        <span class="text-xs text-slate-300">Part ${index + 1}</span>
+        <button type="button" data-save-video data-url="${escapeAttr(url)}" data-ext="${escapeAttr(ext)}" data-name="${escapeAttr(name)}"
+          class="rounded-lg border border-white/10 bg-white/10 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-white/15">Save</button>
+      </div>
+    `;
+  }).join('');
+  return `
+    <div class="space-y-2 rounded-xl border border-amber-400/20 bg-amber-400/10 p-3">
+      <p class="text-xs text-amber-100">${escapeHtml(warning || 'Local stitching is unavailable. The generated segments are available separately.')}</p>
+      <div class="space-y-2">${items}</div>
+    </div>
+  `;
 }
 
 function mediaTypeFromUrl(url) {
