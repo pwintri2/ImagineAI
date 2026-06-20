@@ -28,6 +28,9 @@ or xAI Grok Imagine for images and videos.
   `stability-ai` key.
 - Grok, Atlas, and ModelsLab video durations up to 30 seconds in the UI; longer
   cloud videos are generated as multiple provider segments and stitched locally.
+- Local cloud-video stitching uses ComfyUI's PyAV environment when available,
+  then falls back to `ffmpeg` from `PATH`, `IMAGINEAI_FFMPEG`, or the bundled
+  `ffmpeg-static` npm dependency.
 - Browser UI plus Tauri desktop packaging.
 - Local history, background jobs, media proxying, and ComfyUI model detection.
 - No third-party Python packages required for the server.
@@ -176,6 +179,7 @@ video, or use ModelsLab, xAI, or local Wan for video.
 | `MODELSLAB_IMAGE_MODEL` | `sdxl` | ModelsLab image model ID |
 | `MODELSLAB_VIDEO_MODEL` | `wan2.2` | ModelsLab text-to-video model ID |
 | `MODELSLAB_BASE_URL` | `https://modelslab.com` | ModelsLab API base URL |
+| `IMAGINEAI_FFMPEG` / `FFMPEG_BINARY` / `FFMPEG` | auto-detected | Optional ffmpeg binary path for stitching long cloud videos |
 | `IMAGINEAI_HOST` | `127.0.0.1` | HTTP bind host |
 | `IMAGINEAI_PORT` | `8799` | HTTP port |
 | `IMAGINEAI_DATA_DIR` | `./data` | Local settings, secrets, and outputs |

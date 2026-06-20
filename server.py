@@ -22,6 +22,7 @@ import json
 import os
 import random
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -72,6 +73,7 @@ MODELSLAB_BASE = os.environ.get("MODELSLAB_BASE_URL", "https://modelslab.com").r
 # inline. Best-effort: if unavailable we fall back to serving the mp4.
 COMFY_PYTHON = os.environ.get("COMFY_PYTHON", "/home/pwintri2/ComfyUI/.venv/bin/python")
 COMFY_INPUT_DIR = Path(os.environ.get("COMFYUI_INPUT_DIR", "/home/pwintri2/ComfyUI/input"))
+FFMPEG_ENV_KEYS = ("IMAGINEAI_FFMPEG", "FFMPEG_BINARY", "FFMPEG")
 
 COMFY_IMAGE_TIMEOUT = float(os.environ.get("IMAGINEAI_IMAGE_TIMEOUT", "600"))
 COMFY_VIDEO_TIMEOUT = float(os.environ.get("IMAGINEAI_VIDEO_TIMEOUT", "3600"))
@@ -1046,6 +1048,22 @@ def segment_prompt(prompt: str, index: int, total: int) -> str:
     )
 
 
+def segmented_video_result(clips: list[dict[str, Any]], public_result, warning: str,
+                           extra: dict[str, Any] | None = None) -> dict[str, Any]:
+    segments = [public_result(clip) for clip in clips]
+    first = next((segment for segment in segments if segment.get("url") or segment.get("mp4Url")), None)
+    if not first:
+        raise RuntimeError(warning)
+    result = dict(first)
+    result["type"] = "video"
+    result["segments"] = segments
+    result["stitchStatus"] = "segments"
+    result["stitchWarning"] = warning
+    if extra:
+        result.update(extra)
+    return result
+
+
 def xai_generate_video(prompt: str, aspect: str, seconds: object, model: str, key: str,
                        start_image: object = "", on_progress=None) -> dict[str, Any]:
     duration = clamp_int(seconds, 5, 1, XAI_MAX_STITCHED_SECONDS)
@@ -1081,7 +1099,11 @@ def xai_generate_video(prompt: str, aspect: str, seconds: object, model: str, ke
     paths = [Path(str(clip.get("mp4Path") or "")) for clip in clips if clip.get("mp4Path")]
     combined_url = concat_mp4_paths_to_webm(paths)
     if not combined_url:
-        raise RuntimeError("Grok generated the video segments, but ImagineAI could not stitch them into one file.")
+        return segmented_video_result(
+            clips,
+            xai_public_video_result,
+            "Grok generated the video segments, but local stitching is unavailable. Showing the segments instead.",
+        )
     return {
         "url": combined_url,
         "type": "video",
@@ -1438,12 +1460,18 @@ def atlas_generate_video_with_model(prompt: str, aspect: str, seconds: object, m
 
     paths = [Path(str(clip.get("mp4Path") or "")) for clip in clips if clip.get("mp4Path")]
     combined_url = concat_mp4_paths_to_webm(paths)
+    actual_model = clips[0].get("model") or model_id
     if not combined_url:
-        raise RuntimeError("Atlas generated the video segments, but ImagineAI could not stitch them into one file.")
+        return segmented_video_result(
+            clips,
+            atlas_public_video_result,
+            "Atlas generated the video segments, but local stitching is unavailable. Showing the segments instead.",
+            {"model": actual_model},
+        )
     return {
         "url": combined_url,
         "type": "video",
-        "model": clips[0].get("model") or model_id,
+        "model": actual_model,
         "segments": [atlas_public_video_result(clip) for clip in clips],
     }
 
@@ -1848,7 +1876,11 @@ def modelslab_generate_video(prompt: str, aspect: str, seconds: object, model: s
     paths = [Path(str(clip.get("mp4Path") or "")) for clip in clips if clip.get("mp4Path")]
     combined_url = concat_mp4_paths_to_webm(paths)
     if not combined_url:
-        raise RuntimeError("ModelsLab generated the video segments, but ImagineAI could not stitch them into one file.")
+        return segmented_video_result(
+            clips,
+            modelslab_public_video_result,
+            "ModelsLab generated the video segments, but local stitching is unavailable. Showing the segments instead.",
+        )
     return {
         "url": combined_url,
         "type": "video",
@@ -2219,23 +2251,145 @@ def transcode_mp4_path_to_webm(src_path: Path) -> str | None:
         return None
 
 
-def concat_mp4_paths_to_webm(src_paths: list[Path]) -> str | None:
-    """Stitch local mp4 clips into one VP9 webm via ComfyUI's PyAV environment."""
-    paths = [p for p in src_paths if p.exists() and p.is_file()]
-    if len(paths) < 2 or not Path(COMFY_PYTHON).exists():
-        return None
-    name = f"video_{int(now())}_{uuid.uuid4().hex[:8]}.webm"
-    out_path = OUTPUTS_DIR / name
+def ffmpeg_executable() -> str | None:
+    candidates: list[str] = []
+    for key in FFMPEG_ENV_KEYS:
+        value = os.environ.get(key, "").strip()
+        if value:
+            candidates.append(value)
+
+    from_path = shutil.which("ffmpeg")
+    if from_path:
+        candidates.append(from_path)
+
+    bundled_name = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+    candidates.extend([
+        str(APP_DIR / "node_modules" / "ffmpeg-static" / bundled_name),
+        "/opt/homebrew/bin/ffmpeg",
+        "/usr/local/bin/ffmpeg",
+        "/usr/bin/ffmpeg",
+    ])
+
+    for candidate in candidates:
+        path = Path(candidate).expanduser()
+        if path.is_file() and os.access(path, os.X_OK):
+            return str(path)
+    return None
+
+
+def ffmpeg_video_size(ffmpeg: str, src_path: Path) -> tuple[int, int] | None:
     try:
         result = subprocess.run(
-            [COMFY_PYTHON, "-c", _CONCAT_WEBM_SRC, str(out_path), *[str(p) for p in paths]],
-            capture_output=True, timeout=900,
+            [ffmpeg, "-hide_banner", "-i", str(src_path)],
+            capture_output=True, text=True, timeout=30,
+        )
+    except Exception:
+        return None
+    output = f"{result.stdout}\n{result.stderr}"
+    for width, height in re.findall(r"(?<![A-Za-z0-9])(\d{2,5})x(\d{2,5})(?![A-Za-z0-9])", output):
+        w = int(width)
+        h = int(height)
+        if w > 0 and h > 0:
+            return max(2, w - (w % 2)), max(2, h - (h % 2))
+    return None
+
+
+def concat_mp4_paths_with_ffmpeg(src_paths: list[Path], ext: str,
+                                 codec_args: list[str], timeout: float = 900) -> str | None:
+    paths = [p for p in src_paths if p.exists() and p.is_file()]
+    ffmpeg = ffmpeg_executable()
+    if len(paths) < 2 or not ffmpeg:
+        return None
+
+    ensure_dirs()
+    safe_ext = ext if ext.startswith(".") else f".{ext}"
+    name = f"video_{int(now())}_{uuid.uuid4().hex[:8]}{safe_ext}"
+    out_path = OUTPUTS_DIR / name
+    first_size = ffmpeg_video_size(ffmpeg, paths[0])
+    filters: list[str] = []
+    labels: list[str] = []
+    for index, _ in enumerate(paths):
+        label = f"v{index}"
+        labels.append(f"[{label}]")
+        chain = "setsar=1,fps=30,format=yuv420p"
+        if first_size:
+            width, height = first_size
+            chain = (
+                f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,{chain}"
+            )
+        filters.append(f"[{index}:v:0]{chain}[{label}]")
+    filter_complex = ";".join(filters + [f"{''.join(labels)}concat=n={len(paths)}:v=1:a=0[v]"])
+    input_args = [arg for path in paths for arg in ("-i", str(path))]
+    try:
+        result = subprocess.run(
+            [
+                ffmpeg,
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                *input_args,
+                "-filter_complex",
+                filter_complex,
+                "-map",
+                "[v]",
+                "-an",
+                *codec_args,
+                str(out_path),
+            ],
+            capture_output=True,
+            timeout=timeout,
         )
         if result.returncode != 0 or not out_path.exists() or out_path.stat().st_size == 0:
+            try:
+                out_path.unlink(missing_ok=True)
+            except Exception:
+                pass
             return None
         return output_url(name)
     except Exception:
+        try:
+            out_path.unlink(missing_ok=True)
+        except Exception:
+            pass
         return None
+
+
+def concat_mp4_paths_to_webm(src_paths: list[Path]) -> str | None:
+    """Stitch local mp4 clips into one playable video.
+
+    Prefer ComfyUI's PyAV environment for VP9 webm. On machines without that
+    environment, use ffmpeg from PATH, a configured env var, or ffmpeg-static.
+    """
+    paths = [p for p in src_paths if p.exists() and p.is_file()]
+    if len(paths) < 2:
+        return None
+    if Path(COMFY_PYTHON).exists():
+        name = f"video_{int(now())}_{uuid.uuid4().hex[:8]}.webm"
+        out_path = OUTPUTS_DIR / name
+        try:
+            result = subprocess.run(
+                [COMFY_PYTHON, "-c", _CONCAT_WEBM_SRC, str(out_path), *[str(p) for p in paths]],
+                capture_output=True, timeout=900,
+            )
+            if result.returncode == 0 and out_path.exists() and out_path.stat().st_size > 0:
+                return output_url(name)
+        except Exception:
+            pass
+
+    webm_url = concat_mp4_paths_with_ffmpeg(
+        paths,
+        ".webm",
+        ["-c:v", "libvpx-vp9", "-crf", "34", "-b:v", "0", "-deadline", "realtime", "-cpu-used", "8", "-row-mt", "1"],
+    )
+    if webm_url:
+        return webm_url
+    return concat_mp4_paths_with_ffmpeg(
+        paths,
+        ".mp4",
+        ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", "-movflags", "+faststart"],
+    )
 
 
 def transcode_entry_to_webm(entry: dict[str, Any]) -> str | None:
