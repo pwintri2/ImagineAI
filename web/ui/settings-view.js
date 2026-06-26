@@ -139,7 +139,7 @@ function render() {
         <h3 class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Other API keys</h3>
         <span class="text-[11px] text-slate-500">${otherProviders.length ? `${otherProviders.length} saved` : 'none saved'}</span>
       </div>
-      <p class="text-[11px] text-slate-500">Stored locally for supported providers and future helper scripts. Use <code class="text-slate-400">atlas</code> for Atlas Cloud; use <code class="text-slate-400">sdxl</code>, <code class="text-slate-400">modelslab</code>, <code class="text-slate-400">free-api</code>, or <code class="text-slate-400">vrije-api</code> for ModelsLab; use <code class="text-slate-400">stability</code> for Stability AI.</p>
+      <p class="text-[11px] text-slate-500">Stored locally for supported providers and future helper scripts. Use <code class="text-slate-400">atlas</code> for Atlas Cloud; use <code class="text-slate-400">sdxl</code>, <code class="text-slate-400">modelslab</code>, <code class="text-slate-400">free-api</code>, <code class="text-slate-400">vrije-api</code>, or <code class="text-slate-400">wan2.6-t2v</code> for ModelsLab; use <code class="text-slate-400">stability</code> for Stability AI.</p>
       <div class="space-y-2">
         <input id="customProviderInput" type="text" autocomplete="off" placeholder="Provider name, e.g. openai"
           class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30" />

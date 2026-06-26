@@ -22,8 +22,9 @@ or xAI Grok Imagine for images and videos.
   key.
 - Optional Atlas Cloud image and video generation with a locally stored `atlas`
   key.
-- Optional ModelsLab SDXL image and text-to-video generation with a locally
-  stored `sdxl` or `modelslab` key.
+- Optional ModelsLab SDXL image and text-to-video generation, including the
+  `wan2.6-t2v` video choice, with a locally stored `sdxl`, `modelslab`, or
+  `wan2.6-t2v` key.
 - Optional Stability image generation with a locally stored `stability` or
   `stability-ai` key.
 - Grok, Atlas, and ModelsLab video durations up to 30 seconds in the UI; longer
@@ -42,8 +43,8 @@ or xAI Grok Imagine for images and videos.
 - Optional: an xAI API key for Grok Imagine image and video generation.
 - Optional: an Atlas Cloud API key for image and video generation, saved as
   `atlas`, `atlascloud`, or `atlas-cloud`.
-- Optional: a ModelsLab API key saved as `sdxl`, `modelslab`, `free-api`, or
-  `vrije-api`.
+- Optional: a ModelsLab API key saved as `sdxl`, `modelslab`, `free-api`,
+  `vrije-api`, or `wan2.6-t2v`.
 - Optional: a Stability AI API key saved as `stability` or `stability-ai`.
 
 ## Quick Start
@@ -133,9 +134,9 @@ save it in Settings as `atlas`, `atlascloud`, or `atlas-cloud`. Atlas
 environment variables take precedence over saved keys, which is useful when
 switching from an Atlas Coding Plan token to a full Atlas Cloud API key.
 You can provide the ModelsLab key with `MODELSLAB_API_KEY`, or save it in
-Settings as `sdxl`, `modelslab`, `free-api`, or `vrije-api`. You can provide
-the Stability key with `STABILITY_API_KEY`, or save it in Settings as
-`stability` or `stability-ai`.
+Settings as `sdxl`, `modelslab`, `free-api`, `vrije-api`, or `wan2.6-t2v`.
+You can provide the Stability key with `STABILITY_API_KEY`, or save it in
+Settings as `stability` or `stability-ai`.
 Other saved keys are shown as masked status hints. Supported provider aliases
 such as ModelsLab and Stability are used by the built-in generators; unknown
 provider names are kept for future integrations.
@@ -174,7 +175,8 @@ video, or use ModelsLab, xAI, or local Wan for video.
 | `STABILITY_BASE_URL` | `https://api.stability.ai` | Stability API base URL |
 | `MODELSLAB_API_KEY` | empty | ModelsLab key for SDXL image/video generation |
 | `MODELSLAB_IMAGE_MODEL` | `sdxl` | ModelsLab image model ID |
-| `MODELSLAB_VIDEO_MODEL` | `wan2.2` | ModelsLab text-to-video model ID |
+| `MODELSLAB_VIDEO_MODEL` | `wan2.2` | Default ModelsLab text-to-video model ID |
+| `MODELSLAB_WAN26_VIDEO_MODEL` | `wan2.6-t2v` | ModelsLab model ID used by the dedicated `wan2.6-t2v` video chip |
 | `MODELSLAB_BASE_URL` | `https://modelslab.com` | ModelsLab API base URL |
 | `IMAGINEAI_HOST` | `127.0.0.1` | HTTP bind host |
 | `IMAGINEAI_PORT` | `8799` | HTTP port |

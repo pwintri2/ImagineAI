@@ -120,7 +120,9 @@ function reconcileEngine(config) {
 
   let vModel = s.videoModel;
   const v = config.models?.video || {};
-  const selectedVideoAvailable = vModel === 'xai' ? xai : (vModel === 'atlas' ? atlas : (vModel === 'sdxl' ? modelslab : !!v[vModel]));
+  const selectedVideoAvailable = vModel === 'xai'
+    ? xai
+    : (vModel === 'atlas' ? atlas : (['sdxl', 'wan2.6-t2v'].includes(vModel) ? modelslab : !!v[vModel]));
   if (!selectedVideoAvailable) {
     if (v.wan22_14b) vModel = 'wan22_14b';
     else if (v.wan22_ti2v_5b) vModel = 'wan22_ti2v_5b';
@@ -215,13 +217,13 @@ async function handleGenerateVideo() {
     ? !!s.config.xaiConfigured
     : model === 'atlas'
       ? !!s.config.atlasConfigured
-    : model === 'sdxl'
+    : ['sdxl', 'wan2.6-t2v'].includes(model)
       ? !!s.config.modelslabConfigured
     : !!(s.config.comfyReachable && s.config.models?.video?.[model]);
   if (!available) {
     showToast(model === 'xai'
       ? 'No xAI key saved — open Settings to add one.'
-      : (model === 'atlas' ? 'No Atlas key saved — open Settings to add one as atlas.' : (model === 'sdxl' ? 'No ModelsLab key saved — open Settings to add one.' : 'That video model is not available in ComfyUI.')),
+      : (model === 'atlas' ? 'No Atlas key saved — open Settings to add one as atlas.' : (['sdxl', 'wan2.6-t2v'].includes(model) ? 'No ModelsLab key saved — open Settings to add one.' : 'That video model is not available in ComfyUI.')),
     'error');
     return;
   }
@@ -237,7 +239,7 @@ async function handleGenerateVideo() {
   const started = Date.now();
 
   try {
-    const progressBase = model === 'xai' ? 'Grok Imagine is rendering' : (model === 'atlas' ? 'Atlas is rendering' : (model === 'sdxl' ? 'ModelsLab is rendering' : 'Wan is generating frames'));
+    const progressBase = model === 'xai' ? 'Grok Imagine is rendering' : (model === 'atlas' ? 'Atlas is rendering' : (['sdxl', 'wan2.6-t2v'].includes(model) ? 'ModelsLab is rendering' : 'Wan is generating frames'));
     const { results, modelTitle } = await generateVideo(
       { prompt, model, aspect: s.videoAspect, seconds: videoSecondsForModel(model, s.videoSeconds), startImage },
       (job) => VideoGalleryView.updateStatus(progressLabel(job, started, progressBase)),
@@ -259,7 +261,7 @@ async function handleGenerateVideo() {
 function videoSecondsForModel(model, seconds) {
   const parsed = Number.parseInt(seconds, 10);
   const value = Number.isFinite(parsed) ? parsed : 2;
-  const max = ['xai', 'atlas', 'sdxl'].includes(model) ? 30 : 5;
+  const max = ['xai', 'atlas', 'sdxl', 'wan2.6-t2v'].includes(model) ? 30 : 5;
   return Math.max(1, Math.min(max, value));
 }
 
@@ -267,6 +269,7 @@ function videoModelTitle(model) {
   if (model === 'xai') return 'Grok Imagine Video';
   if (model === 'atlas') return 'Atlas Video';
   if (model === 'sdxl') return 'ModelsLab Video';
+  if (model === 'wan2.6-t2v') return 'wan2.6-t2v';
   if (model === 'wan22_ti2v_5b') return 'Wan 2.2 TI2V 5B';
   if (model === 'wan22_14b') return 'Wan 2.2 14B';
   return 'Wan 2.1 1.3B';

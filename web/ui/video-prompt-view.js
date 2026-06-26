@@ -29,7 +29,7 @@ function chip(label, value, group, active, disabled = false) {
 }
 
 function maxSecondsForModel(model) {
-  if (['xai', 'atlas', 'sdxl'].includes(model)) return 30;
+  if (['xai', 'atlas', 'sdxl', 'wan2.6-t2v'].includes(model)) return 30;
   return 5;
 }
 
@@ -44,7 +44,7 @@ function modelAvailable(id) {
   const { config } = getState();
   if (id === 'xai') return !!config.xaiConfigured;
   if (id === 'atlas') return !!config.atlasConfigured;
-  if (id === 'sdxl') return !!config.modelslabConfigured;
+  if (id === 'sdxl' || id === 'wan2.6-t2v') return !!config.modelslabConfigured;
   return !!(config.comfyReachable && config.models?.video?.[id]);
 }
 
@@ -56,7 +56,7 @@ export function render() {
   const wan21Ok = modelAvailable('wan21_1_3b');
   const xaiOk = modelAvailable('xai');
   const atlasOk = modelAvailable('atlas');
-  const showSdxl = !!s.config.modelslabConfigured;
+  const showModelslab = !!s.config.modelslabConfigured;
   const selectedImage = s._draftVideoStartImage;
   const imageError = s._draftVideoStartImageError || '';
   const maxSeconds = maxSecondsForModel(s.videoModel);
@@ -80,7 +80,8 @@ export function render() {
         <div id="modelChips" class="flex flex-wrap gap-1.5">
           ${chip(`𝕏 ${VIDEO_MODELS.xai.title}`, 'xai', 'model', s.videoModel === 'xai', !xaiOk)}
           ${chip(`◆ ${VIDEO_MODELS.atlas.title}`, 'atlas', 'model', s.videoModel === 'atlas', !atlasOk)}
-          ${showSdxl ? chip(`▣ ${VIDEO_MODELS.sdxl.title}`, 'sdxl', 'model', s.videoModel === 'sdxl', !modelAvailable('sdxl')) : ''}
+          ${showModelslab ? chip(`▣ ${VIDEO_MODELS.sdxl.title}`, 'sdxl', 'model', s.videoModel === 'sdxl', !modelAvailable('sdxl')) : ''}
+          ${showModelslab ? chip(`▣ ${VIDEO_MODELS['wan2.6-t2v'].title}`, 'wan2.6-t2v', 'model', s.videoModel === 'wan2.6-t2v', !modelAvailable('wan2.6-t2v')) : ''}
           ${chip(`✨ ${VIDEO_MODELS.wan22_14b.title}`, 'wan22_14b', 'model', s.videoModel === 'wan22_14b', !wan22Ok)}
           ${chip(`🎞 ${VIDEO_MODELS.wan22_ti2v_5b.title}`, 'wan22_ti2v_5b', 'model', s.videoModel === 'wan22_ti2v_5b', !wanTi2vOk)}
           ${chip(`🪶 ${VIDEO_MODELS.wan21_1_3b.title}`, 'wan21_1_3b', 'model', s.videoModel === 'wan21_1_3b', !wan21Ok)}
@@ -142,6 +143,7 @@ function videoHint(s, anyModel) {
     return `Atlas Cloud video via ${escapeHtml(s.config.atlasVideoModel || 'alibaba/wan-2.7/text-to-video')} · 16-30s is stitched locally from multiple Wan 2.7 segments.`;
   }
   if (s.videoModel === 'sdxl') return 'ModelsLab text-to-video runs in the cloud · 6-30s is stitched locally from multiple ModelsLab segments.';
+  if (s.videoModel === 'wan2.6-t2v') return 'wan2.6-t2v runs through ModelsLab · 6-30s is stitched locally from multiple provider segments.';
   if (!s.config.comfyReachable) return 'ComfyUI not detected — start it to generate video.';
   if (!anyModel) return 'No Wan video model found in ComfyUI.';
   return 'Text-to-video runs locally on your GPU · can take a few minutes.';

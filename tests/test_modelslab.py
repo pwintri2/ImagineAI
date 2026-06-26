@@ -62,6 +62,11 @@ class ModelsLabTests(unittest.TestCase):
              patch.dict(os.environ, {"MODELSLAB_API_KEY": ""}):
             self.assertEqual(server.modelslab_key(), ("free-secret", "free-api"))
 
+    def test_wan26_alias_is_usable_as_modelslab_key(self):
+        with patch.object(server, "load_secrets", return_value={"wan2.6-t2v": "wan26-secret"}), \
+             patch.dict(os.environ, {"MODELSLAB_API_KEY": ""}):
+            self.assertEqual(server.modelslab_key(), ("wan26-secret", "wan2.6-t2v"))
+
     def test_video_payload_uses_modelslab_minimum_fps(self):
         calls = []
 
@@ -101,6 +106,29 @@ class ModelsLabTests(unittest.TestCase):
         self.assertNotIn("mp4Path", result["segments"][0])
         self.assertEqual([call[2] for call in calls], [5, 5, 2])
         self.assertIn("Segment 1 of 3", calls[0][0])
+
+    def test_wan26_video_choice_uses_modelslab_model_id(self):
+        calls = []
+        job_id = server.make_job("video")
+
+        def fake_generate(prompt, aspect, seconds, model, key, on_progress=None):
+            calls.append((prompt, aspect, seconds, model, key))
+            return {"url": "/api/local-media?name=wan26.mp4", "type": "video"}
+
+        with patch.object(server, "modelslab_key", return_value=("secret", "modelslab")), \
+             patch.object(server, "modelslab_generate_video", side_effect=fake_generate):
+            server.run_video_job(job_id, {
+                "prompt": "a glass city at sunrise",
+                "aspect": "wide",
+                "seconds": 6,
+                "model": "wan2.6-t2v",
+            })
+
+        self.assertEqual(calls, [("a glass city at sunrise", "wide", 6, "wan2.6-t2v", "secret")])
+        job = server.get_job(job_id)
+        self.assertEqual(job["status"], "done")
+        self.assertEqual(job["meta"]["modelTitle"], "wan2.6-t2v")
+        self.assertEqual(job["meta"]["model"], "wan2.6-t2v")
 
 
 if __name__ == "__main__":

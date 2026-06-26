@@ -65,6 +65,7 @@ DEFAULT_STABILITY_IMAGE_MODEL = os.environ.get("STABILITY_IMAGE_MODEL", "core")
 STABILITY_BASE = os.environ.get("STABILITY_BASE_URL", "https://api.stability.ai").rstrip("/")
 DEFAULT_MODELSLAB_IMAGE_MODEL = os.environ.get("MODELSLAB_IMAGE_MODEL", "sdxl")
 DEFAULT_MODELSLAB_VIDEO_MODEL = os.environ.get("MODELSLAB_VIDEO_MODEL", "wan2.2")
+DEFAULT_MODELSLAB_WAN26_VIDEO_MODEL = os.environ.get("MODELSLAB_WAN26_VIDEO_MODEL", "wan2.6-t2v")
 MODELSLAB_BASE = os.environ.get("MODELSLAB_BASE_URL", "https://modelslab.com").rstrip("/")
 
 # ComfyUI's Python (has PyAV) — used to transcode H.264 mp4 -> VP9 webm so the
@@ -111,7 +112,15 @@ MODELSLAB_SECRET_PROVIDERS = (
     "freeapi",
     "vrije-api",
     "vrijeapi",
+    "wan2.6-t2v",
+    "wan26-t2v",
+    "wan26_t2v",
 )
+MODELSLAB_DIRECT_VIDEO_MODELS = {
+    "wan2.6-t2v": DEFAULT_MODELSLAB_WAN26_VIDEO_MODEL,
+    "wan26-t2v": DEFAULT_MODELSLAB_WAN26_VIDEO_MODEL,
+    "wan26_t2v": DEFAULT_MODELSLAB_WAN26_VIDEO_MODEL,
+}
 
 DEFAULT_NEGATIVE_IMAGE = ""
 DEFAULT_NEGATIVE_VIDEO = (
@@ -2022,18 +2031,23 @@ def run_video_job(job_id: str, payload: dict[str, Any]) -> None:
     base_w, base_h = ASPECT_TO_SIZE.get(aspect, (1280, 720))
     settings = load_settings()
     try:
-        if model in ("sdxl", "modelslab", "models-lab", "stable-diffusion-api"):
-            modelslab_model = str(payload.get("modelslabVideoModel") or settings.get("modelslabVideoModel")
-                                  or DEFAULT_MODELSLAB_VIDEO_MODEL)
+        if model in ("sdxl", "modelslab", "models-lab", "stable-diffusion-api") or model in MODELSLAB_DIRECT_VIDEO_MODELS:
+            modelslab_model = str(
+                MODELSLAB_DIRECT_VIDEO_MODELS.get(model)
+                or payload.get("modelslabVideoModel")
+                or settings.get("modelslabVideoModel")
+                or DEFAULT_MODELSLAB_VIDEO_MODEL
+            )
+            model_title = "wan2.6-t2v" if model in MODELSLAB_DIRECT_VIDEO_MODELS else "ModelsLab Video"
             update_job(job_id, status="running",
-                       meta={"engine": "modelslab", "modelTitle": "ModelsLab Video", "model": modelslab_model})
+                       meta={"engine": "modelslab", "modelTitle": model_title, "model": modelslab_model})
             key, provider = modelslab_key()
             if not key:
                 raise RuntimeError("No ModelsLab API key saved. Add one in Settings as modelslab or sdxl.")
 
             def on_modelslab_progress(status: str, progress: object) -> None:
                 update_job(job_id, status="running",
-                           meta={"engine": "modelslab", "modelTitle": "ModelsLab Video",
+                           meta={"engine": "modelslab", "modelTitle": model_title,
                                  "model": modelslab_model, "modelslabStatus": status, "progress": progress,
                                  "provider": provider})
 
@@ -2042,7 +2056,7 @@ def run_video_job(job_id: str, payload: dict[str, Any]) -> None:
                 on_progress=on_modelslab_progress,
             )
             update_job(job_id, status="done", results=[result],
-                       meta={"engine": "modelslab", "modelTitle": "ModelsLab Video", "model": modelslab_model,
+                       meta={"engine": "modelslab", "modelTitle": model_title, "model": modelslab_model,
                              "provider": provider})
             return
 

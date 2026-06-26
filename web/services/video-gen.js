@@ -9,6 +9,10 @@ export const VIDEO_MODELS = {
     id: 'sdxl', title: 'ModelsLab Video', subtitle: 'Cloud · ModelsLab',
     note: 'Text-to-video through ModelsLab · uses your ModelsLab quota', defaultSeconds: 2,
   },
+  'wan2.6-t2v': {
+    id: 'wan2.6-t2v', title: 'wan2.6-t2v', subtitle: 'Cloud · ModelsLab',
+    note: 'Text-to-video through ModelsLab with model_id wan2.6-t2v · uses your ModelsLab quota', defaultSeconds: 2,
+  },
   atlas: {
     id: 'atlas', title: 'Atlas Video', subtitle: 'Cloud · Atlas Cloud',
     note: 'Wan 2.7 through Atlas Cloud · up to 30s stitched locally', defaultSeconds: 5,
