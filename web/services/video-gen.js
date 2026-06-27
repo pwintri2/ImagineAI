@@ -17,6 +17,10 @@ export const VIDEO_MODELS = {
     id: 'atlas', title: 'Atlas Video', subtitle: 'Cloud · Atlas Cloud',
     note: 'Wan 2.7 through Atlas Cloud · up to 30s stitched locally', defaultSeconds: 5,
   },
+  seedance: {
+    id: 'seedance', title: 'Seedance 2.0', subtitle: 'Cloud · Seedance2',
+    note: 'Seedance 2.0 text-to-video · 16-30s is stitched locally', defaultSeconds: 5,
+  },
   wan22_14b: {
     id: 'wan22_14b', title: 'Wan 2.2 14B', subtitle: 'Highest quality',
     note: 'Dual-model + 4-step LoRA · slower, sharper', defaultSeconds: 2,

@@ -6,6 +6,7 @@ export const ENGINES = {
   xai: { id: 'xai', title: 'Grok Imagine', subtitle: 'Cloud · xAI', note: 'Needs an xAI API key' },
   atlas: { id: 'atlas', title: 'Atlas', subtitle: 'Cloud · Atlas Cloud', note: 'Needs an Atlas API key' },
   sdxl: { id: 'sdxl', title: 'ModelsLab SDXL', subtitle: 'Cloud · ModelsLab', note: 'Needs a ModelsLab key' },
+  seedance: { id: 'seedance', title: 'Seedance Still', subtitle: 'Cloud · Seedance2', note: 'Uses Seedance return_last_frame' },
 };
 
 /**

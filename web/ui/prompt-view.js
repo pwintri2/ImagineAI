@@ -42,6 +42,7 @@ function engineAvailable(engineId) {
   if (engineId === 'xai') return !!config.xaiConfigured;
   if (engineId === 'atlas') return !!config.atlasConfigured;
   if (engineId === 'sdxl') return !!(config.sdxlConfigured || config.stabilityConfigured);
+  if (engineId === 'seedance') return !!config.seedanceConfigured;
   return false;
 }
 
@@ -53,6 +54,7 @@ export function render() {
   const xaiOk = engineAvailable('xai');
   const atlasOk = engineAvailable('atlas');
   const sdxlOk = engineAvailable('sdxl');
+  const seedanceOk = engineAvailable('seedance');
   const selectedImage = s._draftImageSourceImage;
   const imageError = s._draftImageSourceImageError || '';
 
@@ -98,6 +100,7 @@ export function render() {
             ${chip(`𝕏 ${ENGINES.xai.title}`, 'xai', 'engine', s.imageEngine === 'xai', !xaiOk)}
             ${chip(`◆ ${ENGINES.atlas.title}`, 'atlas', 'engine', s.imageEngine === 'atlas', !atlasOk)}
             ${chip(`▣ ${ENGINES.sdxl.title}`, 'sdxl', 'engine', s.imageEngine === 'sdxl', !sdxlOk)}
+            ${chip(`◈ ${ENGINES.seedance.title}`, 'seedance', 'engine', s.imageEngine === 'seedance', !seedanceOk)}
           </div>
         </div>
         <div class="space-y-1.5">
@@ -149,6 +152,7 @@ function engineHint(s) {
   if (s.imageEngine === 'xai') return `Cloud render via ${escapeHtml(s.config.xaiImageModel || 'Grok Imagine')} · uses your xAI quota`;
   if (s.imageEngine === 'atlas') return `Cloud render via ${escapeHtml(s.config.atlasImageModel || 'seedream-3.0')} · uses your Atlas quota`;
   if (s.imageEngine === 'sdxl') return `Cloud render via ${escapeHtml(s.config.modelslabImageModel || 'sdxl')} · uses your ModelsLab quota`;
+  if (s.imageEngine === 'seedance') return `Seedance still via ${escapeHtml(s.config.seedanceVideoModel || 'seedance-2-0')} return_last_frame · uses Seedance video credits`;
   if (!s.config.comfyReachable) return 'ComfyUI not detected — start it, or switch to a cloud engine in Settings.';
   return 'Runs locally on your GPU · free';
 }

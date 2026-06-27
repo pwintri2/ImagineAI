@@ -83,6 +83,10 @@ function render() {
           <span class="text-slate-500">${c.atlasConfigured ? `key saved${c.atlasProvider ? ` (${escapeHtml(c.atlasProvider)})` : ''}` : 'no key'}</span>
         </div>
         <div class="flex items-center justify-between">
+          <span class="text-slate-400">${dot(c.seedanceConfigured)} Seedance</span>
+          <span class="text-slate-500">${c.seedanceConfigured ? `key saved${c.seedanceProvider ? ` (${escapeHtml(c.seedanceProvider)})` : ''}` : 'no key'}</span>
+        </div>
+        <div class="flex items-center justify-between">
           <span class="text-slate-400">${dot(c.modelslabConfigured)} ModelsLab</span>
           <span class="text-slate-500">${c.modelslabConfigured ? `key saved${c.modelslabProvider ? ` (${escapeHtml(c.modelslabProvider)})` : ''}` : 'no key'}</span>
         </div>
@@ -139,9 +143,9 @@ function render() {
         <h3 class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Other API keys</h3>
         <span class="text-[11px] text-slate-500">${otherProviders.length ? `${otherProviders.length} saved` : 'none saved'}</span>
       </div>
-      <p class="text-[11px] text-slate-500">Stored locally for supported providers and future helper scripts. Use <code class="text-slate-400">atlas</code> for Atlas Cloud; use <code class="text-slate-400">sdxl</code>, <code class="text-slate-400">modelslab</code>, <code class="text-slate-400">free-api</code>, <code class="text-slate-400">vrije-api</code>, or <code class="text-slate-400">wan2.6-t2v</code> for ModelsLab; use <code class="text-slate-400">stability</code> for Stability AI.</p>
+      <p class="text-[11px] text-slate-500">Stored locally for supported providers and future helper scripts. Use <code class="text-slate-400">atlas</code> for Atlas Cloud; use <code class="text-slate-400">seedance</code> for Seedance2.ai; use <code class="text-slate-400">sdxl</code>, <code class="text-slate-400">modelslab</code>, <code class="text-slate-400">free-api</code>, <code class="text-slate-400">vrije-api</code>, or <code class="text-slate-400">wan2.6-t2v</code> for ModelsLab; use <code class="text-slate-400">stability</code> for Stability AI.</p>
       <div class="space-y-2">
-        <input id="customProviderInput" type="text" autocomplete="off" placeholder="Provider name, e.g. openai"
+        <input id="customProviderInput" type="text" autocomplete="off" placeholder="Provider name, e.g. seedance"
           class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30" />
         <div class="flex gap-2">
           <input id="customKeyInput" type="password" autocomplete="off" placeholder="API key"
@@ -175,6 +179,14 @@ function render() {
             <input id="atlasVideoModelInput" type="text" value="${escapeAttr(c.atlasVideoModel || '')}" placeholder="alibaba/wan-2.7/text-to-video"
               class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30" />
           </div>
+        </div>
+      ` : ''}
+      ${c.seedanceConfigured ? `
+        <div class="space-y-1.5">
+          <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Seedance video model</label>
+          <input id="seedanceVideoModelInput" type="text" value="${escapeAttr(c.seedanceVideoModel || '')}" placeholder="seedance-2-0"
+            class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30" />
+          <p class="text-[10px] text-slate-600">Use <code class="text-slate-400">seedance-2-0</code> or <code class="text-slate-400">seedance-2-0-fast</code>.</p>
         </div>
       ` : ''}
       ${c.stabilityConfigured ? `
@@ -219,6 +231,7 @@ function render() {
   document.getElementById('xaiVideoModelInput')?.addEventListener('change', handleSaveXaiVideoModel);
   document.getElementById('atlasImageModelInput')?.addEventListener('change', handleSaveAtlasImageModel);
   document.getElementById('atlasVideoModelInput')?.addEventListener('change', handleSaveAtlasVideoModel);
+  document.getElementById('seedanceVideoModelInput')?.addEventListener('change', handleSaveSeedanceVideoModel);
   document.getElementById('stabilityImageModelInput')?.addEventListener('change', handleSaveStabilityImageModel);
   document.getElementById('modelslabImageModelInput')?.addEventListener('change', handleSaveModelslabImageModel);
   document.getElementById('modelslabVideoModelInput')?.addEventListener('change', handleSaveModelslabVideoModel);
@@ -366,6 +379,16 @@ async function handleSaveAtlasVideoModel(e) {
   try {
     await saveSettings({ atlasVideoModel: model });
     showToast('Atlas video model saved', 'success');
+    await refresh();
+  } catch (err) { showToast(err.message || 'Could not save', 'error'); }
+}
+
+async function handleSaveSeedanceVideoModel(e) {
+  const model = e.target.value.trim();
+  if (!model) return;
+  try {
+    await saveSettings({ seedanceVideoModel: model });
+    showToast('Seedance video model saved', 'success');
     await refresh();
   } catch (err) { showToast(err.message || 'Could not save', 'error'); }
 }

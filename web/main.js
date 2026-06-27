@@ -63,6 +63,7 @@ function availabilityKey(config) {
     atlas: !!config.atlasConfigured,
     sdxl: !!(config.sdxlConfigured || config.stabilityConfigured),
     modelslab: !!config.modelslabConfigured,
+    seedance: !!config.seedanceConfigured,
   });
 }
 
@@ -110,25 +111,28 @@ function reconcileEngine(config) {
   const atlas = !!config.atlasConfigured;
   const sdxl = !!(config.sdxlConfigured || config.stabilityConfigured);
   const modelslab = !!config.modelslabConfigured;
+  const seedance = !!config.seedanceConfigured;
   let engine = s.imageEngine;
-  if (engine === 'local' && !localImg) engine = xai ? 'xai' : (atlas ? 'atlas' : (sdxl ? 'sdxl' : (gemini ? 'gemini' : engine)));
-  if (engine === 'gemini' && !gemini) engine = localImg ? 'local' : (xai ? 'xai' : (atlas ? 'atlas' : (sdxl ? 'sdxl' : engine)));
-  if (engine === 'xai' && !xai) engine = localImg ? 'local' : (atlas ? 'atlas' : (sdxl ? 'sdxl' : (gemini ? 'gemini' : engine)));
-  if (engine === 'atlas' && !atlas) engine = localImg ? 'local' : (xai ? 'xai' : (sdxl ? 'sdxl' : (gemini ? 'gemini' : engine)));
-  if (engine === 'sdxl' && !sdxl) engine = localImg ? 'local' : (xai ? 'xai' : (atlas ? 'atlas' : (gemini ? 'gemini' : engine)));
+  if (engine === 'local' && !localImg) engine = xai ? 'xai' : (atlas ? 'atlas' : (seedance ? 'seedance' : (sdxl ? 'sdxl' : (gemini ? 'gemini' : engine))));
+  if (engine === 'gemini' && !gemini) engine = localImg ? 'local' : (xai ? 'xai' : (atlas ? 'atlas' : (seedance ? 'seedance' : (sdxl ? 'sdxl' : engine))));
+  if (engine === 'xai' && !xai) engine = localImg ? 'local' : (atlas ? 'atlas' : (seedance ? 'seedance' : (sdxl ? 'sdxl' : (gemini ? 'gemini' : engine))));
+  if (engine === 'atlas' && !atlas) engine = localImg ? 'local' : (xai ? 'xai' : (seedance ? 'seedance' : (sdxl ? 'sdxl' : (gemini ? 'gemini' : engine))));
+  if (engine === 'sdxl' && !sdxl) engine = localImg ? 'local' : (xai ? 'xai' : (atlas ? 'atlas' : (seedance ? 'seedance' : (gemini ? 'gemini' : engine))));
+  if (engine === 'seedance' && !seedance) engine = localImg ? 'local' : (xai ? 'xai' : (atlas ? 'atlas' : (sdxl ? 'sdxl' : (gemini ? 'gemini' : engine))));
   if (engine !== s.imageEngine) setState({ imageEngine: engine });
 
   let vModel = s.videoModel;
   const v = config.models?.video || {};
   const selectedVideoAvailable = vModel === 'xai'
     ? xai
-    : (vModel === 'atlas' ? atlas : (['sdxl', 'wan2.6-t2v'].includes(vModel) ? modelslab : !!v[vModel]));
+    : (vModel === 'atlas' ? atlas : (vModel === 'seedance' ? seedance : (['sdxl', 'wan2.6-t2v'].includes(vModel) ? modelslab : !!v[vModel])));
   if (!selectedVideoAvailable) {
     if (v.wan22_14b) vModel = 'wan22_14b';
     else if (v.wan22_ti2v_5b) vModel = 'wan22_ti2v_5b';
     else if (v.wan21_1_3b) vModel = 'wan21_1_3b';
     else if (xai) vModel = 'xai';
     else if (atlas) vModel = 'atlas';
+    else if (seedance) vModel = 'seedance';
     else if (modelslab) vModel = 'sdxl';
     else vModel = '';
   }
@@ -140,6 +144,7 @@ function updateStatus(config) {
   if (localImg) setStatus(true, 'ComfyUI ready');
   else if (config.xaiConfigured) setStatus(true, 'Grok ready');
   else if (config.atlasConfigured) setStatus(true, 'Atlas ready');
+  else if (config.seedanceConfigured) setStatus(true, 'Seedance ready');
   else if (config.modelslabConfigured) setStatus(true, 'ModelsLab ready');
   else if (config.sdxlConfigured || config.stabilityConfigured) setStatus(true, 'SDXL ready');
   else if (config.geminiConfigured) setStatus(true, 'Gemini ready');
@@ -168,6 +173,7 @@ async function handleGenerateImage() {
   if (engine === 'gemini' && !s.config.geminiConfigured) { showToast('No Gemini key saved — open Settings to add one.', 'error'); return; }
   if (engine === 'xai' && !s.config.xaiConfigured) { showToast('No xAI key saved — open Settings to add one.', 'error'); return; }
   if (engine === 'atlas' && !s.config.atlasConfigured) { showToast('No Atlas key saved — open Settings to add one as atlas.', 'error'); return; }
+  if (engine === 'seedance' && !s.config.seedanceConfigured) { showToast('No Seedance key saved — open Settings to add one as seedance.', 'error'); return; }
   if (engine === 'sdxl' && !(s.config.sdxlConfigured || s.config.stabilityConfigured)) { showToast('No ModelsLab/SDXL key saved — open Settings to add one.', 'error'); return; }
   const sourceImage = PromptView.getSourceImage();
   if (sourceImage && !['local', 'gemini', 'xai'].includes(engine)) {
@@ -180,14 +186,14 @@ async function handleGenerateImage() {
   const count = s.imageCount;
   const loadingLabel = sourceImage
     ? (engine === 'gemini' ? 'Asking Gemini to edit…' : (engine === 'xai' ? 'Asking Grok Imagine to edit…' : 'Editing on your GPU…'))
-    : (engine === 'gemini' ? 'Asking Gemini…' : (engine === 'xai' ? 'Asking Grok Imagine…' : (engine === 'atlas' ? 'Asking Atlas…' : (engine === 'sdxl' ? 'Asking ModelsLab…' : 'Rendering on your GPU…'))));
+    : (engine === 'gemini' ? 'Asking Gemini…' : (engine === 'xai' ? 'Asking Grok Imagine…' : (engine === 'atlas' ? 'Asking Atlas…' : (engine === 'seedance' ? 'Asking Seedance…' : (engine === 'sdxl' ? 'Asking ModelsLab…' : 'Rendering on your GPU…')))));
   GalleryView.renderLoading(count, { label: loadingLabel });
   const started = Date.now();
 
   try {
     const progressBase = sourceImage
       ? (engine === 'gemini' ? 'Gemini is editing' : (engine === 'xai' ? 'Grok Imagine is editing' : 'Z-Image editing'))
-      : (engine === 'gemini' ? 'Gemini is painting' : (engine === 'xai' ? 'Grok Imagine is painting' : (engine === 'atlas' ? 'Atlas is painting' : (engine === 'sdxl' ? 'ModelsLab is painting' : 'Z-Image rendering'))));
+      : (engine === 'gemini' ? 'Gemini is painting' : (engine === 'xai' ? 'Grok Imagine is painting' : (engine === 'atlas' ? 'Atlas is painting' : (engine === 'seedance' ? 'Seedance is rendering a still' : (engine === 'sdxl' ? 'ModelsLab is painting' : 'Z-Image rendering')))));
     const { results, modelTitle } = await generateImage(
       { prompt, engine, aspect: s.aspectRatio, count, steps: s.steps, sourceImage },
       (job) => GalleryView.updateStatus(progressLabel(job, started, progressBase)),
@@ -217,13 +223,15 @@ async function handleGenerateVideo() {
     ? !!s.config.xaiConfigured
     : model === 'atlas'
       ? !!s.config.atlasConfigured
+    : model === 'seedance'
+      ? !!s.config.seedanceConfigured
     : ['sdxl', 'wan2.6-t2v'].includes(model)
       ? !!s.config.modelslabConfigured
     : !!(s.config.comfyReachable && s.config.models?.video?.[model]);
   if (!available) {
     showToast(model === 'xai'
       ? 'No xAI key saved — open Settings to add one.'
-      : (model === 'atlas' ? 'No Atlas key saved — open Settings to add one as atlas.' : (['sdxl', 'wan2.6-t2v'].includes(model) ? 'No ModelsLab key saved — open Settings to add one.' : 'That video model is not available in ComfyUI.')),
+      : (model === 'atlas' ? 'No Atlas key saved — open Settings to add one as atlas.' : (model === 'seedance' ? 'No Seedance key saved — open Settings to add one as seedance.' : (['sdxl', 'wan2.6-t2v'].includes(model) ? 'No ModelsLab key saved — open Settings to add one.' : 'That video model is not available in ComfyUI.'))),
     'error');
     return;
   }
@@ -239,7 +247,7 @@ async function handleGenerateVideo() {
   const started = Date.now();
 
   try {
-    const progressBase = model === 'xai' ? 'Grok Imagine is rendering' : (model === 'atlas' ? 'Atlas is rendering' : (['sdxl', 'wan2.6-t2v'].includes(model) ? 'ModelsLab is rendering' : 'Wan is generating frames'));
+    const progressBase = model === 'xai' ? 'Grok Imagine is rendering' : (model === 'atlas' ? 'Atlas is rendering' : (model === 'seedance' ? 'Seedance is rendering' : (['sdxl', 'wan2.6-t2v'].includes(model) ? 'ModelsLab is rendering' : 'Wan is generating frames')));
     const { results, modelTitle } = await generateVideo(
       { prompt, model, aspect: s.videoAspect, seconds: videoSecondsForModel(model, s.videoSeconds), startImage },
       (job) => VideoGalleryView.updateStatus(progressLabel(job, started, progressBase)),
@@ -261,13 +269,14 @@ async function handleGenerateVideo() {
 function videoSecondsForModel(model, seconds) {
   const parsed = Number.parseInt(seconds, 10);
   const value = Number.isFinite(parsed) ? parsed : 2;
-  const max = ['xai', 'atlas', 'sdxl', 'wan2.6-t2v'].includes(model) ? 30 : 5;
+  const max = ['xai', 'atlas', 'sdxl', 'wan2.6-t2v', 'seedance'].includes(model) ? 30 : 5;
   return Math.max(1, Math.min(max, value));
 }
 
 function videoModelTitle(model) {
   if (model === 'xai') return 'Grok Imagine Video';
   if (model === 'atlas') return 'Atlas Video';
+  if (model === 'seedance') return 'Seedance 2.0 Video';
   if (model === 'sdxl') return 'ModelsLab Video';
   if (model === 'wan2.6-t2v') return 'wan2.6-t2v';
   if (model === 'wan22_ti2v_5b') return 'Wan 2.2 TI2V 5B';

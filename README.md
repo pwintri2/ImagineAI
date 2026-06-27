@@ -7,8 +7,8 @@ ComfyUI install, and keeps settings, keys, and generated media on your machine.
 
 The current app can generate and edit still images with Z-Image Turbo, make
 text-to-video or image-to-video clips with Wan 2.1 / Wan 2.2, and optionally use
-cloud providers when your GPU is busy: Google Gemini for images, and Atlas Cloud
-or xAI Grok Imagine for images and videos.
+cloud providers when your GPU is busy: Google Gemini for images, and Atlas Cloud,
+Seedance2.ai, or xAI Grok Imagine for images and videos.
 
 ## Highlights
 
@@ -22,6 +22,8 @@ or xAI Grok Imagine for images and videos.
   key.
 - Optional Atlas Cloud image and video generation with a locally stored `atlas`
   key.
+- Optional Seedance2.ai still-frame and video generation with a locally stored
+  `seedance` key.
 - Optional ModelsLab SDXL image and text-to-video generation, including the
   `wan2.6-t2v` video choice, with a locally stored `sdxl`, `modelslab`, or
   `wan2.6-t2v` key.
@@ -43,6 +45,8 @@ or xAI Grok Imagine for images and videos.
 - Optional: an xAI API key for Grok Imagine image and video generation.
 - Optional: an Atlas Cloud API key for image and video generation, saved as
   `atlas`, `atlascloud`, or `atlas-cloud`.
+- Optional: a Seedance2.ai API key saved as `seedance`, `seedance2`, or
+  `seedance2-ai`.
 - Optional: a ModelsLab API key saved as `sdxl`, `modelslab`, `free-api`,
   `vrije-api`, or `wan2.6-t2v`.
 - Optional: a Stability AI API key saved as `stability` or `stability-ai`.
@@ -108,7 +112,9 @@ The Video tab accepts an optional start image. Start images are wired for:
 - xAI Grok Imagine image-to-video.
 - Atlas Cloud image-to-video.
 
-ModelsLab video remains text-to-video only in this app.
+Seedance and ModelsLab video remain text-to-video only in this app. The public
+Seedance2.ai API accepts image-to-video inputs as public image URLs; ImagineAI
+does not currently upload local start images to a public URL for Seedance.
 
 ## Settings And Keys
 
@@ -121,6 +127,7 @@ Open Settings in the app to configure:
 - xAI image/video models.
 - xAI API key.
 - Atlas image/video models.
+- Seedance video model.
 - Other named API keys for future providers or local helper scripts.
 - ModelsLab image/video models when a ModelsLab key is saved.
 - Stability image model (`core`, `sd3`, or `ultra`) when a Stability key is
@@ -133,6 +140,9 @@ You can provide the Atlas key with `ATLAS_API_KEY` or `ATLASCLOUD_API_KEY`, or
 save it in Settings as `atlas`, `atlascloud`, or `atlas-cloud`. Atlas
 environment variables take precedence over saved keys, which is useful when
 switching from an Atlas Coding Plan token to a full Atlas Cloud API key.
+You can provide the Seedance2.ai key with `SEEDANCE_API_KEY` or
+`SEEDANCE2_API_KEY`, or save it in Settings as `seedance`, `seedance2`, or
+`seedance2-ai`.
 You can provide the ModelsLab key with `MODELSLAB_API_KEY`, or save it in
 Settings as `sdxl`, `modelslab`, `free-api`, `vrije-api`, or `wan2.6-t2v`.
 You can provide the Stability key with `STABILITY_API_KEY`, or save it in
@@ -149,6 +159,10 @@ access errors because there is no equivalent text-to-video fallback in the app.
 Atlas Coding Plan tokens can list video models, but Atlas returns 403 for video
 generation with those tokens. Use a full Atlas Cloud API key/plan for Atlas
 video, or use ModelsLab, xAI, or local Wan for video.
+Seedance2.ai documents a video API. In the Image tab, ImagineAI uses that same
+official endpoint with `return_last_frame` enabled and saves the returned last
+frame as a still image. This consumes Seedance video credits and creates a short
+provider video task behind the scenes.
 
 ## Environment
 
@@ -170,6 +184,10 @@ video, or use ModelsLab, xAI, or local Wan for video.
 | `ATLAS_WAN27_PROMPT_EXTEND` | `true` | Enables Atlas prompt enhancement for Wan 2.7 |
 | `ATLAS_WAN27_SEED` | `-1` | Wan 2.7 seed, with `-1` for random |
 | `ATLAS_BASE_URL` / `ATLASCLOUD_BASE_URL` | `https://api.atlascloud.ai/api/v1` | Atlas Cloud API base URL |
+| `SEEDANCE_API_KEY` / `SEEDANCE2_API_KEY` | empty | Seedance2.ai key for still-frame/video generation |
+| `SEEDANCE_VIDEO_MODEL` / `SEEDANCE2_VIDEO_MODEL` | `seedance-2-0` | Seedance video model (`seedance-2-0` or `seedance-2-0-fast`) |
+| `SEEDANCE_RESOLUTION` / `SEEDANCE2_RESOLUTION` | `720p` | Seedance output resolution (`480p`, `720p`, `1080p`, or `4k`) |
+| `SEEDANCE_BASE_URL` / `SEEDANCE2_BASE_URL` | `https://api.seedance2.ai` | Seedance2.ai API base URL |
 | `STABILITY_API_KEY` | empty | Stability/SDXL key for cloud image generation |
 | `STABILITY_IMAGE_MODEL` | `core` | Stability image model: `core`, `sd3`, or `ultra` |
 | `STABILITY_BASE_URL` | `https://api.stability.ai` | Stability API base URL |

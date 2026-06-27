@@ -67,6 +67,9 @@ DEFAULT_MODELSLAB_IMAGE_MODEL = os.environ.get("MODELSLAB_IMAGE_MODEL", "sdxl")
 DEFAULT_MODELSLAB_VIDEO_MODEL = os.environ.get("MODELSLAB_VIDEO_MODEL", "wan2.2")
 DEFAULT_MODELSLAB_WAN26_VIDEO_MODEL = os.environ.get("MODELSLAB_WAN26_VIDEO_MODEL", "wan2.6-t2v")
 MODELSLAB_BASE = os.environ.get("MODELSLAB_BASE_URL", "https://modelslab.com").rstrip("/")
+DEFAULT_SEEDANCE_VIDEO_MODEL = os.environ.get("SEEDANCE_VIDEO_MODEL", os.environ.get("SEEDANCE2_VIDEO_MODEL", "seedance-2-0"))
+DEFAULT_SEEDANCE_RESOLUTION = os.environ.get("SEEDANCE_RESOLUTION", os.environ.get("SEEDANCE2_RESOLUTION", "720p"))
+SEEDANCE_BASE = os.environ.get("SEEDANCE_BASE_URL", os.environ.get("SEEDANCE2_BASE_URL", "https://api.seedance2.ai")).rstrip("/")
 
 # ComfyUI's Python (has PyAV) — used to transcode H.264 mp4 -> VP9 webm so the
 # Linux webkit2gtk webview, which usually lacks an H.264 decoder, can play video
@@ -81,11 +84,15 @@ XAI_VIDEO_TIMEOUT = float(os.environ.get("IMAGINEAI_XAI_VIDEO_TIMEOUT", "1200"))
 XAI_MAX_SECONDS_PER_REQUEST = 15
 XAI_MAX_STITCHED_SECONDS = 30
 MODELSLAB_MAX_STITCHED_SECONDS = 30
+SEEDANCE_MAX_SECONDS_PER_REQUEST = 15
+SEEDANCE_MAX_STITCHED_SECONDS = 30
+SEEDANCE_STILL_SECONDS = 4
 ATLAS_MAX_SECONDS_PER_REQUEST = 10
 ATLAS_WAN27_MAX_SECONDS_PER_REQUEST = 15
 ATLAS_MAX_STITCHED_SECONDS = 30
 ATLAS_IMAGE_TIMEOUT = float(os.environ.get("IMAGINEAI_ATLAS_IMAGE_TIMEOUT", "600"))
 ATLAS_VIDEO_TIMEOUT = float(os.environ.get("IMAGINEAI_ATLAS_VIDEO_TIMEOUT", "1200"))
+SEEDANCE_VIDEO_TIMEOUT = float(os.environ.get("IMAGINEAI_SEEDANCE_VIDEO_TIMEOUT", "1800"))
 
 # Wan video shares the GPU with Z-Image; only one heavy ComfyUI job at a time.
 COMFY_LOCK = threading.Lock()
@@ -115,6 +122,15 @@ MODELSLAB_SECRET_PROVIDERS = (
     "wan2.6-t2v",
     "wan26-t2v",
     "wan26_t2v",
+)
+SEEDANCE_SECRET_PROVIDERS = (
+    "seedance",
+    "seedance2",
+    "seedance-2",
+    "seedance2-ai",
+    "seedance-2-ai",
+    "seedance2.ai",
+    "seedance-2-0",
 )
 MODELSLAB_DIRECT_VIDEO_MODELS = {
     "wan2.6-t2v": DEFAULT_MODELSLAB_WAN26_VIDEO_MODEL,
@@ -226,6 +242,7 @@ def load_settings() -> dict[str, Any]:
         "stabilityImageModel": DEFAULT_STABILITY_IMAGE_MODEL,
         "modelslabImageModel": DEFAULT_MODELSLAB_IMAGE_MODEL,
         "modelslabVideoModel": DEFAULT_MODELSLAB_VIDEO_MODEL,
+        "seedanceVideoModel": DEFAULT_SEEDANCE_VIDEO_MODEL,
         "defaultImageEngine": "local",
     }
     allowed = set(defaults)
@@ -264,7 +281,7 @@ def valid_http_url(url: str) -> bool:
 def save_settings(patch: dict[str, Any]) -> dict[str, Any]:
     current = load_settings()
     for key in ("comfyUrl", "geminiModel", "xaiImageModel", "xaiVideoModel", "atlasImageModel", "atlasVideoModel", "stabilityImageModel",
-                "modelslabImageModel", "modelslabVideoModel", "defaultImageEngine"):
+                "modelslabImageModel", "modelslabVideoModel", "seedanceVideoModel", "defaultImageEngine"):
         if key in patch and isinstance(patch[key], str) and patch[key].strip():
             value = patch[key].strip()
             if key == "comfyUrl":
@@ -369,6 +386,17 @@ def modelslab_key() -> tuple[str, str]:
         if secrets.get(provider):
             return secrets[provider], provider
     return os.environ.get("MODELSLAB_API_KEY", ""), "env"
+
+
+def seedance_key() -> tuple[str, str]:
+    for env_key in ("SEEDANCE_API_KEY", "SEEDANCE2_API_KEY", "SEEDANCE2AI_API_KEY"):
+        if os.environ.get(env_key):
+            return os.environ.get(env_key, ""), env_key
+    secrets = load_secrets()
+    for provider in SEEDANCE_SECRET_PROVIDERS:
+        if secrets.get(provider):
+            return secrets[provider], provider
+    return "", "env"
 
 
 # --------------------------------------------------------------------------- #
@@ -1096,6 +1124,221 @@ def xai_generate_video(prompt: str, aspect: str, seconds: object, model: str, ke
         "type": "video",
         "segments": [xai_public_video_result(clip) for clip in clips],
     }
+
+
+# --------------------------------------------------------------------------- #
+# Seedance2.ai video API
+# --------------------------------------------------------------------------- #
+class SeedanceHTTPError(RuntimeError):
+    def __init__(self, code: int, message: str) -> None:
+        super().__init__(f"Seedance API error {code}: {message}")
+        self.code = code
+        self.message = message
+
+
+def seedance_request_json(path: str, key: str, payload: dict[str, Any] | None = None,
+                          method: str = "GET", timeout: float = 120) -> dict[str, Any]:
+    body = None if payload is None else json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(f"{SEEDANCE_BASE}{path}", data=body, method=method)
+    req.add_header("Authorization", f"Bearer {key}")
+    if payload is not None:
+        req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            raw = response.read().decode("utf-8") or "{}"
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")
+        message = detail[:500]
+        try:
+            parsed = json.loads(detail)
+            err = parsed.get("error") if isinstance(parsed, dict) else None
+            if isinstance(err, dict):
+                message = str(err.get("message") or err.get("code") or message)
+            elif isinstance(err, str):
+                message = err
+        except (json.JSONDecodeError, TypeError):
+            pass
+        raise SeedanceHTTPError(exc.code, message) from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Could not reach Seedance API: {exc.reason}") from exc
+    return json.loads(raw)
+
+
+def seedance_aspect_ratio(aspect: str) -> str:
+    return ASPECT_TO_GEMINI.get(aspect, "16:9")
+
+
+def seedance_task_id(data: dict[str, Any]) -> str:
+    return str(data.get("taskId") or data.get("task_id") or data.get("id") or "").strip()
+
+
+def seedance_data(data: dict[str, Any]) -> dict[str, Any]:
+    body = data.get("data")
+    return body if isinstance(body, dict) else {}
+
+
+def seedance_result_urls(data: dict[str, Any]) -> list[str]:
+    results = seedance_data(data).get("results")
+    if not isinstance(results, list):
+        return []
+    return [str(item).strip() for item in results if isinstance(item, str) and item.strip()]
+
+
+def seedance_last_frame_url(data: dict[str, Any]) -> str:
+    return str(seedance_data(data).get("last_frame_url") or "").strip()
+
+
+def seedance_error(data: dict[str, Any]) -> str:
+    err = data.get("error")
+    if isinstance(err, dict):
+        return str(err.get("message") or err.get("code") or "Seedance request failed.")
+    if isinstance(err, str) and err.strip():
+        return err
+    failed = data.get("failed_reason") or seedance_data(data).get("failed_reason")
+    if failed:
+        return str(failed)
+    return "Seedance request failed."
+
+
+def seedance_poll_result(task_id: str, key: str, on_progress=None,
+                         timeout: float = SEEDANCE_VIDEO_TIMEOUT, interval: float = 10) -> dict[str, Any]:
+    deadline = now() + timeout
+    while now() < deadline:
+        data = seedance_request_json(f"/v1/tasks/{urllib.parse.quote(task_id)}", key, timeout=120)
+        status = str(data.get("status") or "").lower()
+        if on_progress:
+            on_progress(status or "running", data.get("credits"))
+        if status in ("completed", "succeeded", "success", "done"):
+            if seedance_result_urls(data) or seedance_last_frame_url(data):
+                return data
+            raise RuntimeError("Seedance task completed without a result URL.")
+        if status in ("failed", "failure", "error", "cancelled", "canceled", "timed_out", "timeout"):
+            raise RuntimeError(seedance_error(data))
+        time.sleep(interval)
+    raise TimeoutError("Seedance video generation timed out.")
+
+
+def seedance_start_video_task(prompt: str, aspect: str, seconds: object, model: str, key: str,
+                              return_last_frame: bool = False, generate_audio: bool = True) -> str:
+    duration = clamp_int(seconds, 5, 4, SEEDANCE_MAX_SECONDS_PER_REQUEST)
+    model_id = model or DEFAULT_SEEDANCE_VIDEO_MODEL
+    payload = {
+        "model": model_id,
+        "input": {
+            "prompt": prompt,
+            "generation_type": "text-to-video",
+            "duration": duration,
+            "aspect_ratio": seedance_aspect_ratio(aspect),
+            "resolution": DEFAULT_SEEDANCE_RESOLUTION,
+            "generate_audio": bool(generate_audio),
+            "watermark": False,
+            "web_search": False,
+            "return_last_frame": bool(return_last_frame),
+            "seed": -1,
+        },
+    }
+    data = seedance_request_json("/v1/videos/generations", key, payload, method="POST", timeout=120)
+    task_id = seedance_task_id(data)
+    if not task_id:
+        raise RuntimeError("Seedance did not return a taskId.")
+    return task_id
+
+
+def seedance_public_video_result(result: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in result.items() if k != "mp4Path"}
+
+
+def seedance_generate_video_clip(prompt: str, aspect: str, seconds: object, model: str, key: str,
+                                 on_progress=None) -> dict[str, Any]:
+    model_id = model or DEFAULT_SEEDANCE_VIDEO_MODEL
+    task_id = seedance_start_video_task(prompt, aspect, seconds, model_id, key)
+    data = seedance_poll_result(task_id, key, on_progress=on_progress)
+    remote_url = next((url for url in seedance_result_urls(data) if url.startswith(("http://", "https://"))), "")
+    if not remote_url:
+        raise RuntimeError("Seedance video finished without a downloadable video URL.")
+    mp4_url, mp4_path, _ = download_url_to_output(remote_url, "seedance_video", ".mp4", timeout=900)
+    webm_url = transcode_mp4_path_to_webm(mp4_path)
+    return {
+        "url": webm_url or mp4_url,
+        "type": "video",
+        "mp4Url": mp4_url,
+        "mp4Path": str(mp4_path),
+        "model": model_id,
+        "seedanceTaskId": task_id,
+    }
+
+
+def seedance_video_segment_lengths(seconds: object) -> list[int]:
+    duration = clamp_int(seconds, 5, 4, SEEDANCE_MAX_STITCHED_SECONDS)
+    if duration <= SEEDANCE_MAX_SECONDS_PER_REQUEST:
+        return [duration]
+    if duration <= SEEDANCE_MAX_SECONDS_PER_REQUEST + 4:
+        return [duration - 4, 4]
+    return [SEEDANCE_MAX_SECONDS_PER_REQUEST, duration - SEEDANCE_MAX_SECONDS_PER_REQUEST]
+
+
+def seedance_generate_video(prompt: str, aspect: str, seconds: object, model: str, key: str,
+                            on_progress=None) -> dict[str, Any]:
+    segment_lengths = seedance_video_segment_lengths(seconds)
+    if len(segment_lengths) == 1:
+        return seedance_public_video_result(
+            seedance_generate_video_clip(prompt, aspect, segment_lengths[0], model, key, on_progress)
+        )
+
+    clips: list[dict[str, Any]] = []
+    total = len(segment_lengths)
+    for index, segment in enumerate(segment_lengths, start=1):
+        def segment_progress(status: str, progress: object, idx=index, total_segments=total) -> None:
+            if on_progress:
+                on_progress(f"segment {idx}/{total_segments}: {status}", progress)
+
+        clips.append(seedance_generate_video_clip(
+            segment_prompt(prompt, index, total),
+            aspect,
+            segment,
+            model,
+            key,
+            on_progress=segment_progress,
+        ))
+
+    paths = [Path(str(clip.get("mp4Path") or "")) for clip in clips if clip.get("mp4Path")]
+    combined_url = concat_mp4_paths_to_webm(paths)
+    if not combined_url:
+        raise RuntimeError("Seedance generated the video segments, but ImagineAI could not stitch them into one file.")
+    return {
+        "url": combined_url,
+        "type": "video",
+        "model": clips[0].get("model") or model or DEFAULT_SEEDANCE_VIDEO_MODEL,
+        "segments": [seedance_public_video_result(clip) for clip in clips],
+    }
+
+
+def seedance_generate_image(prompt: str, aspect: str, count: int, model: str, key: str,
+                            on_progress=None) -> list[str]:
+    model_id = model or DEFAULT_SEEDANCE_VIDEO_MODEL
+    requested = clamp_int(count, 1, 1, 4)
+    urls: list[str] = []
+    for index in range(requested):
+        def still_progress(status: str, progress: object, idx=index + 1, total=requested) -> None:
+            if on_progress:
+                on_progress(f"still {idx}/{total}: {status}", progress)
+
+        task_id = seedance_start_video_task(
+            prompt,
+            aspect,
+            SEEDANCE_STILL_SECONDS,
+            model_id,
+            key,
+            return_last_frame=True,
+            generate_audio=False,
+        )
+        data = seedance_poll_result(task_id, key, on_progress=still_progress)
+        last_frame = seedance_last_frame_url(data)
+        if not last_frame:
+            raise RuntimeError("Seedance completed without a last-frame image URL.")
+        url, _, _ = download_url_to_output(last_frame, "seedance_image", ".png", timeout=600)
+        urls.append(url)
+    return urls
 
 
 # --------------------------------------------------------------------------- #
@@ -1930,6 +2173,31 @@ def run_image_job(job_id: str, payload: dict[str, Any]) -> None:
                        meta={"engine": "xai", "modelTitle": "Grok Imagine", "model": model})
             return
 
+        if engine in ("seedance", "seedance2", "seedance-2", "seedance2-ai"):
+            if isinstance(source_image, str) and source_image.strip():
+                raise RuntimeError("Seedance stills are text-only here. The public Seedance API needs public image URLs for image references.")
+            model = str(payload.get("seedanceVideoModel") or settings.get("seedanceVideoModel")
+                        or DEFAULT_SEEDANCE_VIDEO_MODEL)
+            key, provider = seedance_key()
+            update_job(job_id, status="running",
+                       meta={"engine": "seedance", "modelTitle": "Seedance 2.0 Still",
+                             "model": model, "provider": provider})
+            if not key:
+                raise RuntimeError("No Seedance API key saved. Add one in Settings as seedance.")
+
+            def on_seedance_progress(status: str, progress: object) -> None:
+                update_job(job_id, status="running",
+                           meta={"engine": "seedance", "modelTitle": "Seedance 2.0 Still",
+                                 "model": model, "seedanceStatus": status, "progress": progress,
+                                 "provider": provider})
+
+            urls = seedance_generate_image(prompt, aspect, count, model, key, on_progress=on_seedance_progress)
+            update_job(job_id, status="done",
+                       results=[{"url": u, "type": "image"} for u in urls],
+                       meta={"engine": "seedance", "modelTitle": "Seedance 2.0 Still",
+                             "model": model, "provider": provider})
+            return
+
         if engine in ("atlas", "atlascloud", "atlas-cloud"):
             if isinstance(source_image, str) and source_image.strip():
                 raise RuntimeError("Atlas image reference uploads are not wired for this image engine yet. Use Z-Image, Gemini, or Grok Imagine for image edits.")
@@ -2062,6 +2330,34 @@ def run_video_job(job_id: str, payload: dict[str, Any]) -> None:
 
         if model in ("stability", "stability-ai"):
             raise RuntimeError("Stability image keys are available for images only here; use ModelsLab, xAI, or local Wan for video.")
+
+        if model in ("seedance", "seedance2", "seedance-2", "seedance2-ai"):
+            if isinstance(payload.get("startImage"), str) and payload.get("startImage").strip():
+                raise RuntimeError("Seedance start images are not wired here yet because the public API needs publicly reachable image URLs.")
+            seedance_model = str(payload.get("seedanceVideoModel") or settings.get("seedanceVideoModel")
+                                 or DEFAULT_SEEDANCE_VIDEO_MODEL)
+            key, provider = seedance_key()
+            update_job(job_id, status="running",
+                       meta={"engine": "seedance", "modelTitle": "Seedance 2.0 Video",
+                             "model": seedance_model, "provider": provider})
+            if not key:
+                raise RuntimeError("No Seedance API key saved. Add one in Settings as seedance.")
+
+            def on_seedance_progress(status: str, progress: object) -> None:
+                update_job(job_id, status="running",
+                           meta={"engine": "seedance", "modelTitle": "Seedance 2.0 Video",
+                                 "model": seedance_model, "seedanceStatus": status, "progress": progress,
+                                 "provider": provider})
+
+            result = seedance_generate_video(
+                prompt, aspect, payload.get("seconds"), seedance_model, key,
+                on_progress=on_seedance_progress,
+            )
+            actual_seedance_model = str(result.get("model") or seedance_model)
+            update_job(job_id, status="done", results=[result],
+                       meta={"engine": "seedance", "modelTitle": "Seedance 2.0 Video",
+                             "model": actual_seedance_model, "provider": provider})
+            return
 
         if model in ("atlas", "atlascloud", "atlas-cloud"):
             atlas_model = str(payload.get("atlasVideoModel") or settings.get("atlasVideoModel")
@@ -2426,6 +2722,7 @@ class Handler(BaseHTTPRequestHandler):
         atlas_value, atlas_provider = atlas_key()
         stability_value, stability_provider = stability_key()
         modelslab_value, modelslab_provider = modelslab_key()
+        seedance_value, seedance_provider = seedance_key()
         return {
             "comfyUrl": settings["comfyUrl"],
             "comfyReachable": models["reachable"],
@@ -2447,6 +2744,9 @@ class Handler(BaseHTTPRequestHandler):
             "modelslabProvider": modelslab_provider if modelslab_value else "",
             "modelslabImageModel": settings["modelslabImageModel"],
             "modelslabVideoModel": settings["modelslabVideoModel"],
+            "seedanceConfigured": bool(seedance_value),
+            "seedanceProvider": seedance_provider if seedance_value else "",
+            "seedanceVideoModel": settings["seedanceVideoModel"],
             "defaultImageEngine": settings["defaultImageEngine"],
         }
 
