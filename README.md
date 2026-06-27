@@ -1,5 +1,9 @@
 # ImagineAI
 
+<p align="center">
+  <img src="src-tauri/icons/icon.png" alt="ImagineAI app icon" width="96" height="96">
+</p>
+
 ImagineAI is a local-first image and video studio for people who want a clean,
 fast creative cockpit without sending every prompt to a cloud service by
 default. It serves a lightweight web UI from `server.py`, talks to your local
