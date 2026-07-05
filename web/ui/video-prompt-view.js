@@ -71,7 +71,7 @@ export function render() {
   const seedanceOk = modelAvailable('seedance');
   const stableDiffusionOk = modelAvailable('stable-diffusion-api');
   const showModelslab = !!s.config.modelslabConfigured;
-  const selectedImage = s._draftVideoStartImage;
+  const startImages = s._draftVideoStartImages || [];
   const imageError = s._draftVideoStartImageError || '';
   const maxSeconds = maxSecondsForModel(s.videoModel);
   const selectedSeconds = Math.min(s.videoSeconds, maxSeconds);
@@ -107,13 +107,23 @@ export function render() {
 
       <div class="space-y-2 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
         <div class="flex items-center justify-between gap-3">
-          <label for="videoStartImageInput" class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Start image</label>
-          ${selectedImage ? '<button id="clearStartImage" type="button" class="text-xs text-slate-400 hover:text-violet-300 transition-colors">Remove</button>' : ''}
+          <label for="videoStartImageInput" class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Start images${startImages.length ? ` · ${startImages.length}` : ''}</label>
+          ${startImages.length ? '<button id="clearStartImages" type="button" class="text-xs text-slate-400 hover:text-violet-300 transition-colors">Clear all</button>' : ''}
         </div>
-        <input id="videoStartImageInput" type="file" accept="image/png,image/jpeg,image/webp"
+        ${startImages.length ? `<div class="flex flex-wrap gap-2">
+          ${startImages.map((img, i) => `
+            <div class="relative">
+              <img src="${escapeAttr(img.dataUrl)}" alt="${escapeAttr(img.name)}" title="${escapeAttr(img.name)}"
+                class="h-16 w-16 rounded-lg object-cover border border-white/10 bg-black/30">
+              <span class="absolute -top-1.5 -left-1.5 rounded-full bg-violet-600 text-white text-[9px] font-bold w-4 h-4 flex items-center justify-center shadow">${i + 1}</span>
+              <button type="button" data-remove-image="${i}" aria-label="Remove image ${i + 1}"
+                class="absolute -top-1.5 -right-1.5 rounded-full bg-black/70 text-white text-[11px] leading-none w-4 h-4 flex items-center justify-center hover:bg-red-500 transition-colors">×</button>
+            </div>`).join('')}
+        </div>` : ''}
+        <input id="videoStartImageInput" type="file" multiple accept="image/png,image/jpeg,image/webp"
           class="block w-full text-xs text-slate-400 file:mr-3 file:rounded-lg file:border-0 file:bg-white/10 file:px-3 file:py-2 file:text-xs file:font-medium file:text-slate-200 hover:file:bg-white/15">
         <p class="text-[10px] ${imageError ? 'text-red-300' : 'text-slate-600'}">
-          ${imageError ? escapeHtml(imageError) : escapeHtml(startImageLabel(selectedImage))}
+          ${imageError ? escapeHtml(imageError) : escapeHtml(startImagesLabel(startImages))}
         </p>
       </div>
 
@@ -193,8 +203,17 @@ function handleClick(e) {
     promptInput?.focus();
     return;
   }
-  if (e.target.closest('#clearStartImage')) {
-    getState()._draftVideoStartImage = null;
+  const removeBtn = e.target.closest('[data-remove-image]');
+  if (removeBtn) {
+    const idx = parseInt(removeBtn.dataset.removeImage, 10);
+    const images = getState()._draftVideoStartImages || [];
+    if (Number.isInteger(idx) && idx >= 0 && idx < images.length) images.splice(idx, 1);
+    getState()._draftVideoStartImageError = '';
+    render();
+    return;
+  }
+  if (e.target.closest('#clearStartImages')) {
+    getState()._draftVideoStartImages = [];
     getState()._draftVideoStartImageError = '';
     render();
     return;
@@ -210,40 +229,29 @@ function rememberDraft() {
   if (promptInput) getState()._draftVideoPrompt = promptInput.value;
 }
 
-async function handleStartImageChange() {
-  const file = startImageInput?.files?.[0];
-  const s = getState();
-  if (!file) {
-    s._draftVideoStartImage = null;
-    s._draftVideoStartImageError = '';
-    render();
-    return;
-  }
-  if (!file.type.startsWith('image/')) {
-    s._draftVideoStartImage = null;
-    s._draftVideoStartImageError = 'Choose a PNG, JPG, or WebP image.';
-    render();
-    return;
-  }
-  if (file.size > 24 * 1024 * 1024) {
-    s._draftVideoStartImage = null;
-    s._draftVideoStartImageError = 'Choose an image under 24 MB.';
-    render();
-    return;
-  }
+const MAX_START_IMAGES = 8;
+const START_IMAGE_MODELS = ['wan22_ti2v_5b', 'wan22_14b', 'xai', 'atlas'];
 
-  s._draftVideoStartImage = {
-    dataUrl: await readFileAsDataURL(file),
-    name: file.name,
-    size: file.size,
-  };
-  s._draftVideoStartImageError = '';
-  if (!['wan22_ti2v_5b', 'xai', 'atlas'].includes(s.videoModel) && modelAvailable('wan22_ti2v_5b')) {
-    setState({ videoModel: 'wan22_ti2v_5b' });
-  } else if (!['wan22_ti2v_5b', 'xai', 'atlas'].includes(s.videoModel) && modelAvailable('xai')) {
-    setState({ videoModel: 'xai' });
-  } else if (!['wan22_ti2v_5b', 'xai', 'atlas'].includes(s.videoModel) && modelAvailable('atlas')) {
-    setState({ videoModel: 'atlas' });
+async function handleStartImageChange() {
+  const files = Array.from(startImageInput?.files || []);
+  const s = getState();
+  if (!files.length) return;
+  s._draftVideoStartImages = s._draftVideoStartImages || [];
+  let error = '';
+  for (const file of files) {
+    if (s._draftVideoStartImages.length >= MAX_START_IMAGES) { error = `Up to ${MAX_START_IMAGES} images.`; break; }
+    if (!file.type.startsWith('image/')) { error = 'Choose PNG, JPG, or WebP images.'; continue; }
+    if (file.size > 24 * 1024 * 1024) { error = `${file.name} is over 24 MB.`; continue; }
+    // eslint-disable-next-line no-await-in-loop
+    s._draftVideoStartImages.push({ dataUrl: await readFileAsDataURL(file), name: file.name, size: file.size });
+  }
+  s._draftVideoStartImageError = error;
+  if (startImageInput) startImageInput.value = ''; // let the same file be picked again later
+  // Point at a model that supports start images if the current one doesn't.
+  if (s._draftVideoStartImages.length && !START_IMAGE_MODELS.includes(s.videoModel)) {
+    if (modelAvailable('wan22_ti2v_5b')) setState({ videoModel: 'wan22_ti2v_5b' });
+    else if (modelAvailable('xai')) setState({ videoModel: 'xai' });
+    else if (modelAvailable('atlas')) setState({ videoModel: 'atlas' });
   }
   render();
 }
@@ -257,9 +265,12 @@ function readFileAsDataURL(file) {
   });
 }
 
-function startImageLabel(image) {
-  if (!image) return 'Optional. Add one to animate a still image with Wan 2.2 TI2V 5B, Grok Imagine, or Atlas.';
-  return `Selected: ${image.name} · ${formatBytes(image.size)}`;
+function startImagesLabel(images) {
+  if (!images.length) {
+    return 'Optional. Add one or more images. Grok mixes multiple images into one clip; local Wan 2.2 TI2V/14B travels through them as keyframes; Atlas uses the first only.';
+  }
+  if (images.length === 1) return `1 start frame · ${formatBytes(images[0].size)}`;
+  return `${images.length} images · Grok blends them; local Wan uses them as keyframes in order.`;
 }
 
 function formatBytes(bytes) {
@@ -287,8 +298,10 @@ export function setGenerating(isLoading) {
 }
 
 export function getPrompt() { return promptInput?.value?.trim() || ''; }
-export function getStartImage() { return getState()._draftVideoStartImage || null; }
+export function getStartImages() { return getState()._draftVideoStartImages || []; }
+export function getStartImage() { return (getState()._draftVideoStartImages || [])[0] || null; }
 export function focusPrompt() { promptInput?.focus(); }
 
 function shorten(t) { return t.length > 30 ? t.slice(0, 28) + '…' : t; }
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
+function escapeAttr(s) { return escapeHtml(s).replace(/"/g, '&quot;'); }

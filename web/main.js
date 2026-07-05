@@ -238,10 +238,13 @@ async function handleGenerateVideo() {
     'error');
     return;
   }
-  const startImage = VideoPromptView.getStartImage();
-  if (startImage && !['wan22_ti2v_5b', 'xai', 'atlas'].includes(model)) {
-    showToast('Start images work with Wan 2.2 TI2V 5B, Grok Imagine, or Atlas. Select one of those first.', 'info');
+  const startImages = VideoPromptView.getStartImages();
+  if (startImages.length && !['wan22_ti2v_5b', 'wan22_14b', 'xai', 'atlas'].includes(model)) {
+    showToast('Start images work with Wan 2.2 TI2V 5B / 14B, Grok Imagine, or Atlas. Select one of those first.', 'info');
     return;
+  }
+  if (startImages.length > 1 && !['wan22_ti2v_5b', 'wan22_14b', 'xai'].includes(model)) {
+    showToast('Only the first image is used here. Multiple images mix on Grok, or become keyframes on local Wan 2.2 TI2V 5B / 14B.', 'info');
   }
 
   const seconds = videoSecondsForModel(model, s.videoSeconds);
@@ -262,7 +265,7 @@ async function handleGenerateVideo() {
   try {
     const progressBase = model === 'xai' ? 'Grok Imagine is rendering' : (model === 'atlas' ? 'Atlas is rendering' : (model === 'seedance' ? 'Seedance is rendering' : (MODELSLAB_VIDEO_MODELS.includes(model) ? 'Stable Diffusion is rendering' : 'Wan is generating frames')));
     const { results, modelTitle, status } = await generateVideo(
-      { prompt, model, aspect: s.videoAspect, seconds, startImage },
+      { prompt, model, aspect: s.videoAspect, seconds, startImage: startImages[0] || null, startImages },
       (job) => {
         VideoGalleryView.updateStatus(videoProgressLabel(job, started, progressBase));
         VideoGalleryView.updateProgress(job.meta?.progress, job.meta?.note);
