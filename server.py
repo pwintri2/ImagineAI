@@ -83,7 +83,7 @@ COMFY_MISSING_HISTORY_GRACE = float(os.environ.get("IMAGINEAI_MISSING_HISTORY_GR
 XAI_VIDEO_TIMEOUT = float(os.environ.get("IMAGINEAI_XAI_VIDEO_TIMEOUT", "1200"))
 XAI_MAX_SECONDS_PER_REQUEST = 15
 XAI_MAX_STITCHED_SECONDS = 30
-MODELSLAB_MAX_STITCHED_SECONDS = 30
+MODELSLAB_MAX_STITCHED_SECONDS = 120  # cloud (no local VRAM); stitched from ~5s ModelsLab segments
 SEEDANCE_MAX_SECONDS_PER_REQUEST = 15
 SEEDANCE_MAX_STITCHED_SECONDS = 30
 SEEDANCE_STILL_SECONDS = 4
@@ -94,11 +94,41 @@ ATLAS_IMAGE_TIMEOUT = float(os.environ.get("IMAGINEAI_ATLAS_IMAGE_TIMEOUT", "600
 ATLAS_VIDEO_TIMEOUT = float(os.environ.get("IMAGINEAI_ATLAS_VIDEO_TIMEOUT", "1200"))
 SEEDANCE_VIDEO_TIMEOUT = float(os.environ.get("IMAGINEAI_SEEDANCE_VIDEO_TIMEOUT", "1800"))
 
+# Local Wan long-form video: render in blocks and stitch them into one clip.
+# The 14B model is too heavy to render 120s in a single pass on a small GPU, so
+# we generate short blocks and carry the last frame of each block into the next
+# (image-to-video) for visual continuity.
+LOCAL_MAX_STITCHED_SECONDS = int(os.environ.get("IMAGINEAI_LOCAL_MAX_SECONDS", "120"))
+LOCAL_BLOCK_SECONDS = max(1, int(os.environ.get("IMAGINEAI_WAN_BLOCK_SECONDS", "10")))
+LOCAL_MIN_BLOCK_SECONDS = max(1, int(os.environ.get("IMAGINEAI_WAN_MIN_BLOCK_SECONDS", "5")))
+LOCAL_MAX_DIMENSION = max(64, int(os.environ.get("IMAGINEAI_WAN_MAX_DIMENSION", "576")))
+LOCAL_MIN_DIMENSION = max(64, int(os.environ.get("IMAGINEAI_WAN_MIN_DIMENSION", "192")))
+# The umt5-xxl text encoder alone is ~5GB; on a small/shared GPU it OOMs at the
+# CLIPTextEncode step. Loading it on CPU keeps that VRAM free (a little slower).
+# Set IMAGINEAI_WAN_CLIP_DEVICE=default to put it back on the GPU.
+WAN_CLIP_DEVICE = os.environ.get("IMAGINEAI_WAN_CLIP_DEVICE", "cpu").strip() or "cpu"
+# Seed each continuation block with a lossless PNG of the previous block's last frame
+# (taken inside ComfyUI, before H.264), which stops compression artefacts from
+# compounding into "art-school" mush. Set to 0 to fall back to ffmpeg frame grabs.
+WAN_CLEAN_SEED_FRAME = os.environ.get("IMAGINEAI_WAN_CLEAN_SEED_FRAME", "1").strip().lower() not in ("0", "false", "no")
+# WanVideoWrapper (kijai) long-form path: block-swap streams transformer blocks
+# through system RAM (fits the 14B/5B on 8GB VRAM) and context windows keep one long
+# clip coherent in a single pass — no block-stitching or last-frame chaining needed.
+WANVIDEO_BLOCK_SWAP = min(40, max(0, int(os.environ.get("IMAGINEAI_WANVIDEO_BLOCK_SWAP", "20"))))
+WANVIDEO_STEPS = min(60, max(1, int(os.environ.get("IMAGINEAI_WANVIDEO_STEPS", "25"))))
+# WanVideoWrapper's T5 loader rejects the Comfy fp8_scaled encoder, so it needs kijai's
+# own umt5 encoder (downloaded into models/text_encoders).
+WANVIDEO_T5_ENCODER = os.environ.get("IMAGINEAI_WANVIDEO_T5", "umt5-xxl-enc-fp8_e4m3fn.safetensors")
+
 # Wan video shares the GPU with Z-Image; only one heavy ComfyUI job at a time.
 COMFY_LOCK = threading.Lock()
 
 JOBS: dict[str, dict[str, Any]] = {}
 JOBS_LOCK = threading.Lock()
+
+
+class JobCancelled(Exception):
+    """Raised inside a job runner when the user asked to stop it."""
 SETTINGS_LOCK = threading.Lock()
 SECRETS_LOCK = threading.Lock()
 
@@ -110,6 +140,9 @@ MODELSLAB_SECRET_PROVIDERS = (
     "modelslab",
     "models-lab",
     "stable-diffusion-api",
+    "stable-diffusion",
+    "stablediffusion",
+    "stableduffusion",
     "sdxl",
     "modelslab-free",
     "modelslab-free-api",
@@ -440,6 +473,16 @@ def queue_comfy_prompt(graph: dict[str, Any], client_id: str) -> str:
     return prompt_id
 
 
+def comfy_free_memory() -> None:
+    """Best-effort: ask ComfyUI to unload cached models and free VRAM before a heavy
+    job, so memory held by a previous image/video model doesn't cause an OOM."""
+    try:
+        comfy_request("/free", {"unload_models": True, "free_memory": True},
+                      method="POST", timeout=15)
+    except Exception:
+        pass
+
+
 def queue_contains_prompt(queue: dict[str, Any], prompt_id: str) -> bool:
     for bucket in ("queue_running", "queue_pending"):
         for item in queue.get(bucket, []) or []:
@@ -448,10 +491,16 @@ def queue_contains_prompt(queue: dict[str, Any], prompt_id: str) -> bool:
     return False
 
 
-def wait_for_history(prompt_id: str, timeout: float, on_state=None) -> dict[str, Any]:
+def wait_for_history(prompt_id: str, timeout: float, on_state=None, should_cancel=None) -> dict[str, Any]:
     deadline = now() + timeout
     missing_since: float | None = None
     while now() < deadline:
+        if should_cancel and should_cancel():
+            try:
+                comfy_request("/interrupt", {}, method="POST", timeout=5)
+            except Exception:
+                pass
+            raise JobCancelled(f"ComfyUI job cancelled: {prompt_id}")
         history = comfy_request(f"/history/{urllib.parse.quote(prompt_id)}", timeout=30)
         item = history.get(prompt_id)
         if isinstance(item, dict):
@@ -566,7 +615,23 @@ def detect_models() -> dict[str, Any]:
         and "umt5_xxl_fp8_e4m3fn_scaled.safetensors" in clip_names
         and "wan_2.1_vae.safetensors" in vae_names
     )
+    # WanVideoWrapper long-form path: needs the custom node loaded, the 5B model, and
+    # its own umt5 encoder (the Comfy fp8_scaled one is rejected by the T5 loader).
+    info["video"]["wanvideo_5b"] = (
+        info["video"]["wan22_ti2v_5b"]
+        and WANVIDEO_T5_ENCODER in clip_names
+        and comfy_node_available("WanVideoModelLoader")
+    )
     return info
+
+
+def comfy_node_available(node: str) -> bool:
+    """True if a custom-node class (e.g. a WanVideoWrapper node) is loaded in ComfyUI."""
+    try:
+        info = comfy_request(f"/object_info/{node}", timeout=8)
+        return isinstance(info, dict) and node in info
+    except Exception:
+        return False
 
 
 # --------------------------------------------------------------------------- #
@@ -643,9 +708,10 @@ def build_wan21_graph(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
     seed = clamp_int(data.get("seed"), random.randint(0, 2**32 - 1), 0, 2**63 - 1)
     steps = clamp_int(data.get("steps"), 8, 1, 40)
     cfg = clamp_float(data.get("cfg"), 5.0, 0.0, 20.0)
+    clip_device = str(data.get("clip_device") or WAN_CLIP_DEVICE)
     return {
         "38": {"class_type": "CLIPLoader",
-               "inputs": {"clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors", "type": "wan", "device": "default"}},
+               "inputs": {"clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors", "type": "wan", "device": clip_device}},
         "39": {"class_type": "VAELoader", "inputs": {"vae_name": "wan_2.1_vae.safetensors"}},
         "37": {"class_type": "UNETLoader",
                "inputs": {"unet_name": "Wan2.1/wan2.1_t2v_1.3B_fp16.safetensors", "weight_dtype": "default"}},
@@ -679,9 +745,10 @@ def build_wan22_graph(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
     seed = clamp_int(data.get("seed"), random.randint(0, 2**32 - 1), 0, 2**63 - 1)
     steps = clamp_int(data.get("steps"), 4, 1, 40)
     cfg = clamp_float(data.get("cfg"), 1.0, 0.0, 20.0)
-    return {
+    clip_device = str(data.get("clip_device") or WAN_CLIP_DEVICE)
+    graph: dict[str, dict[str, Any]] = {
         "71": {"class_type": "CLIPLoader",
-               "inputs": {"clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors", "type": "wan", "device": "default"}},
+               "inputs": {"clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors", "type": "wan", "device": clip_device}},
         "73": {"class_type": "VAELoader", "inputs": {"vae_name": "wan_2.1_vae.safetensors"}},
         "75": {"class_type": "UNETLoader",
                "inputs": {"unet_name": "wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors", "weight_dtype": "default"}},
@@ -715,6 +782,11 @@ def build_wan22_graph(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
                 "inputs": {"video": ["114", 0], "filename_prefix": safe_prefix("imagineai_wan22", prompt),
                            "format": "mp4", "codec": "h264"}},
     }
+    if data.get("emit_last_frame"):
+        graph["120"] = {"class_type": "ImageFromBatch", "inputs": {"image": ["87", 0], "batch_index": -1, "length": 1}}
+        graph["121"] = {"class_type": "SaveImage",
+                        "inputs": {"images": ["120", 0], "filename_prefix": "imagineai_lastframe"}}
+    return graph
 
 
 def build_wan22_ti2v_graph(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -732,10 +804,11 @@ def build_wan22_ti2v_graph(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
     steps = clamp_int(data.get("steps"), 30, 1, 60)
     cfg = clamp_float(data.get("cfg"), 5.0, 0.0, 20.0)
     start_image = str(data.get("start_image") or "").strip()
+    clip_device = str(data.get("clip_device") or WAN_CLIP_DEVICE)
 
     graph: dict[str, dict[str, Any]] = {
         "38": {"class_type": "CLIPLoader",
-               "inputs": {"clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors", "type": "wan", "device": "default"}},
+               "inputs": {"clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors", "type": "wan", "device": clip_device}},
         "39": {"class_type": "VAELoader", "inputs": {"vae_name": "wan2.2_vae.safetensors"}},
         "37": {"class_type": "UNETLoader",
                "inputs": {"unet_name": "wan2.2_ti2v_5B_fp16.safetensors", "weight_dtype": "default"}},
@@ -757,7 +830,75 @@ def build_wan22_ti2v_graph(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
     if start_image:
         graph["57"] = {"class_type": "LoadImage", "inputs": {"image": start_image}}
         graph["55"]["inputs"]["start_image"] = ["57", 0]
+    if data.get("emit_last_frame"):
+        graph["120"] = {"class_type": "ImageFromBatch", "inputs": {"image": ["8", 0], "batch_index": -1, "length": 1}}
+        graph["121"] = {"class_type": "SaveImage",
+                        "inputs": {"images": ["120", 0], "filename_prefix": "imagineai_lastframe"}}
     return graph
+
+
+def build_wanvideo_graph(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """WanVideoWrapper (kijai) long-form text-to-video with the Wan 2.2 TI2V 5B model.
+    Block-swap streams transformer blocks through system RAM so it fits 8GB VRAM, and
+    context windows generate one coherent clip in a single pass (no drift-prone
+    per-block chaining). Uses the models you already have installed."""
+    prompt = str(data.get("prompt", "")).strip()
+    negative = str(data.get("negative_prompt", DEFAULT_NEGATIVE_VIDEO)).strip()
+    seconds = clamp_float(data.get("seconds"), 5.0, 1.0, 120.0)
+    fps = clamp_float(data.get("fps"), 16.0, 1.0, 24.0)
+    width = clamp_int(data.get("width"), 704, 32, 16384)
+    height = clamp_int(data.get("height"), 704, 32, 16384)
+    width = max(32, width - (width % 32))
+    height = max(32, height - (height % 32))
+    frames = clamp_int(data.get("frames"), wan_frames(seconds, fps), 1, 100000)
+    frames = frames + ((1 - frames) % 4)
+    seed = clamp_int(data.get("seed"), random.randint(0, 2**32 - 1), 0, 2**63 - 1)
+    steps = clamp_int(data.get("steps"), WANVIDEO_STEPS, 1, 60)
+    cfg = clamp_float(data.get("cfg"), 5.0, 0.0, 20.0)
+    shift = clamp_float(data.get("shift"), 8.0, 0.0, 30.0)
+    blocks_to_swap = clamp_int(data.get("blocks_to_swap"), WANVIDEO_BLOCK_SWAP, 0, 40)
+    # Context windows: each window is context_frames latents with context_overlap shared
+    # with its neighbour, so the whole clip stays consistent no matter how long it is.
+    ctx_frames = clamp_int(data.get("context_frames"), 81, 16, 1000)
+    ctx_overlap = clamp_int(data.get("context_overlap"), 16, 0, 500)
+    ctx_stride = clamp_int(data.get("context_stride"), 4, 1, 100)
+    text_device = "cpu" if WAN_CLIP_DEVICE == "cpu" else "gpu"
+    return {
+        "1": {"class_type": "WanVideoBlockSwap",
+              "inputs": {"blocks_to_swap": blocks_to_swap, "offload_img_emb": True, "offload_txt_emb": True,
+                         "use_non_blocking": False, "vace_blocks_to_swap": 0, "prefetch_blocks": 0,
+                         "block_swap_debug": False}},
+        "2": {"class_type": "WanVideoModelLoader",
+              "inputs": {"model": "wan2.2_ti2v_5B_fp16.safetensors", "base_precision": "bf16",
+                         "quantization": "disabled", "load_device": "offload_device",
+                         "attention_mode": "sdpa", "block_swap_args": ["1", 0]}},
+        "3": {"class_type": "WanVideoVAELoader",
+              "inputs": {"model_name": "wan2.2_vae.safetensors", "precision": "bf16"}},
+        # WanVideoWrapper needs its own umt5 encoder (the Comfy fp8_scaled one is rejected).
+        "4": {"class_type": "LoadWanVideoT5TextEncoder",
+              "inputs": {"model_name": WANVIDEO_T5_ENCODER, "precision": "bf16",
+                         "load_device": "offload_device", "quantization": "disabled"}},
+        "5": {"class_type": "WanVideoTextEncode",
+              "inputs": {"positive_prompt": prompt, "negative_prompt": negative, "t5": ["4", 0],
+                         "force_offload": True, "device": text_device}},
+        "6": {"class_type": "WanVideoEmptyEmbeds",
+              "inputs": {"width": width, "height": height, "num_frames": frames}},
+        "7": {"class_type": "WanVideoContextOptions",
+              "inputs": {"context_schedule": "uniform_standard", "context_frames": ctx_frames,
+                         "context_stride": ctx_stride, "context_overlap": ctx_overlap,
+                         "freenoise": True, "verbose": False, "fuse_method": "linear"}},
+        "8": {"class_type": "WanVideoSampler",
+              "inputs": {"model": ["2", 0], "image_embeds": ["6", 0], "text_embeds": ["5", 0],
+                         "context_options": ["7", 0], "steps": steps, "cfg": cfg, "shift": shift,
+                         "seed": seed, "force_offload": True, "scheduler": "unipc", "riflex_freq_index": 0}},
+        "9": {"class_type": "WanVideoDecode",
+              "inputs": {"vae": ["3", 0], "samples": ["8", 0], "enable_vae_tiling": True,
+                         "tile_x": 272, "tile_y": 272, "tile_stride_x": 144, "tile_stride_y": 128}},
+        "114": {"class_type": "CreateVideo", "inputs": {"images": ["9", 0], "fps": fps}},
+        "116": {"class_type": "SaveVideo",
+                "inputs": {"video": ["114", 0], "filename_prefix": safe_prefix("imagineai_wanvideo", prompt),
+                           "format": "mp4", "codec": "h264"}},
+    }
 
 
 def decode_image_data_url(data_url: object) -> tuple[str, bytes]:
@@ -1077,9 +1218,17 @@ def xai_generate_video_clip(prompt: str, aspect: str, duration: int, model: str,
 def segment_prompt(prompt: str, index: int, total: int) -> str:
     if total <= 1:
         return prompt
+    if index == 1:
+        role = "the opening — establish the scene and start the action"
+    elif index == total:
+        role = "the ending — bring the action to a natural close"
+    else:
+        role = "pick up exactly where the previous part left off, do not restart"
     return (
         f"{prompt}\n\n"
-        f"Segment {index} of {total}: keep the same setting, subjects, style, camera language, and motion continuity."
+        f"Segment {index} of {total} — {role}. This is one single continuous story from beginning to end: "
+        f"keep the same characters, wardrobe, setting, lighting, colour palette, art style, and camera "
+        f"language as the previous part, and carry the motion and story forward smoothly."
     )
 
 
@@ -2135,6 +2284,23 @@ def get_job(job_id: str) -> dict[str, Any] | None:
         return dict(job) if job else None
 
 
+def request_job_cancel(job_id: str) -> bool:
+    """Flag a running job for cancellation. Returns False if it's already finished."""
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job or job.get("status") in ("done", "error", "cancelled"):
+            return False
+        job["cancelRequested"] = True
+        job["updatedAt"] = now()
+        return True
+
+
+def job_cancel_requested(job_id: str) -> bool:
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        return bool(job and job.get("cancelRequested"))
+
+
 def run_image_job(job_id: str, payload: dict[str, Any]) -> None:
     prompt = str(payload.get("prompt", "")).strip()
     engine = str(payload.get("engine") or "local").lower()
@@ -2306,7 +2472,7 @@ def run_video_job(job_id: str, payload: dict[str, Any]) -> None:
                 or settings.get("modelslabVideoModel")
                 or DEFAULT_MODELSLAB_VIDEO_MODEL
             )
-            model_title = "wan2.6-t2v" if model in MODELSLAB_DIRECT_VIDEO_MODELS else "ModelsLab Video"
+            model_title = "wan2.6-t2v" if model in MODELSLAB_DIRECT_VIDEO_MODELS else "Stable Diffusion Video"
             update_job(job_id, status="running",
                        meta={"engine": "modelslab", "modelTitle": model_title, "model": modelslab_model})
             key, provider = modelslab_key()
@@ -2408,10 +2574,23 @@ def run_video_job(job_id: str, payload: dict[str, Any]) -> None:
                        meta={"engine": "xai", "modelTitle": "Grok Imagine Video", "model": xai_model})
             return
 
+        if model in ("wanvideo", "wanvideo_5b"):
+            render_wanvideo_single_pass(job_id, payload, aspect, prompt)
+            return
+
+        total_seconds = clamp_int(payload.get("seconds"), 5, 1, LOCAL_MAX_STITCHED_SECONDS)
+        title = local_video_title(model)
+        # Long clips are rendered as blocks and stitched together; the 14B model
+        # can't render 120s in one pass on a small GPU.
+        if total_seconds > LOCAL_BLOCK_SECONDS:
+            render_local_stitched_video(job_id, payload, model, aspect,
+                                        prompt, total_seconds, title)
+            return
+
         common = {
             "prompt": prompt,
             "negative_prompt": payload.get("negativePrompt", DEFAULT_NEGATIVE_VIDEO),
-            "seconds": payload.get("seconds"),
+            "seconds": total_seconds,
             "fps": payload.get("fps"),
             "seed": payload.get("seed"),
             "steps": payload.get("steps"),
@@ -2422,7 +2601,6 @@ def run_video_job(job_id: str, payload: dict[str, Any]) -> None:
             common.update({"width": payload.get("width", min(base_w, 480)),
                            "height": payload.get("height", min(base_h, 320))})
             graph = build_wan21_graph(common)
-            title = "Wan 2.1 1.3B"
         elif model == "wan22_ti2v_5b":
             ti_w, ti_h = TI2V_ASPECT_TO_SIZE.get(aspect, (1280, 704))
             start_image = save_start_image_for_comfy(payload.get("startImage"), payload.get("startImageName"))
@@ -2430,18 +2608,18 @@ def run_video_job(job_id: str, payload: dict[str, Any]) -> None:
                            "height": payload.get("height", ti_h),
                            "start_image": start_image})
             graph = build_wan22_ti2v_graph(common)
-            title = "Wan 2.2 TI2V 5B"
         else:
             model = "wan22_14b"
             common.update({"width": payload.get("width", min(base_w, 768)),
                            "height": payload.get("height", min(base_h, 768))})
             graph = build_wan22_graph(common)
-            title = "Wan 2.2 14B"
         update_job(job_id, status="running", meta={"engine": "local", "modelTitle": title, "model": model})
         with COMFY_LOCK:
+            comfy_free_memory()  # reclaim VRAM from any previously loaded model first
             prompt_id = queue_comfy_prompt(graph, "imagineai-video")
             history = wait_for_history(prompt_id, COMFY_VIDEO_TIMEOUT,
-                                       on_state=lambda s: update_job(job_id, status=s))
+                                       on_state=lambda s: update_job(job_id, status=s),
+                                       should_cancel=lambda: job_cancel_requested(job_id))
         err = extract_error(history)
         if err:
             raise RuntimeError(json.dumps(err, ensure_ascii=False))
@@ -2455,6 +2633,9 @@ def run_video_job(job_id: str, payload: dict[str, Any]) -> None:
         update_job(job_id, status="done",
                    results=[{"url": webm_url or mp4_url, "type": "video", "mp4Url": mp4_url}],
                    meta={"engine": "local", "modelTitle": title, "model": model})
+    except JobCancelled:
+        update_job(job_id, status="cancelled", error=None,
+                   meta={"engine": "local", "note": "Cancelled by user."})
     except Exception as exc:  # noqa: BLE001
         update_job(job_id, status="error", error=str(exc))
 
@@ -2546,6 +2727,360 @@ def concat_mp4_paths_to_webm(src_paths: list[Path]) -> str | None:
         return output_url(name)
     except Exception:
         return None
+
+
+# Save the final frame of a clip as a PNG so it can seed the next block (i2v).
+_LAST_FRAME_SRC = r"""
+import sys, av
+src, dst = sys.argv[1], sys.argv[2]
+inp = av.open(src)
+ivs = inp.streams.video[0]
+last = None
+for frame in inp.decode(ivs):
+    last = frame
+inp.close()
+if last is None:
+    raise SystemExit(3)
+last.to_image().save(dst)
+"""
+
+
+def wan_block_dimensions(aspect: str) -> tuple[int, int]:
+    """Pick one resolution used by every block so they concatenate cleanly and the
+    carried-over frame matches the next block's latent. Multiples of 32, capped so
+    the 14B model fits on a small GPU."""
+    base_w, base_h = ASPECT_TO_SIZE.get(aspect, (1280, 720))
+    longest = max(base_w, base_h, 1)
+    scale = min(1.0, LOCAL_MAX_DIMENSION / float(longest))
+    width = max(32, int(round(base_w * scale / 32)) * 32)
+    height = max(32, int(round(base_h * scale / 32)) * 32)
+    return width, height
+
+
+def is_oom_like(message: object) -> bool:
+    """True when an error looks like the GPU ran out of memory or a block stalled —
+    the signal to retry that block at a smaller length."""
+    low = str(message).lower()
+    needles = (
+        "out of memory", "oom", "cuda error", "cuda out of memory", "cublas",
+        "cudnn", "not enough memory", "alloc", "allocat", "timed out", "timeout",
+    )
+    return any(n in low for n in needles)
+
+
+def fetch_comfy_video_to_path(entry: dict[str, Any]) -> Path:
+    """Pull a ComfyUI-rendered clip out of ComfyUI and store it as a local mp4 so
+    we can extract its last frame and stitch it later."""
+    params = urllib.parse.urlencode({
+        "filename": entry.get("filename", ""),
+        "subfolder": entry.get("subfolder", ""),
+        "type": entry.get("type", "output"),
+    })
+    data, _ = comfy_get_bytes(f"/view?{params}", timeout=180)
+    path = OUTPUTS_DIR / f".block_{int(now())}_{uuid.uuid4().hex[:8]}.mp4"
+    path.write_bytes(data)
+    return path
+
+
+def fetch_comfy_image_to_input(entry: dict[str, Any]) -> str:
+    """Pull a ComfyUI-saved PNG (the block's clean last frame) into ComfyUI's input
+    folder and return the relative name for a LoadImage node, or "" on failure."""
+    try:
+        params = urllib.parse.urlencode({
+            "filename": entry.get("filename", ""),
+            "subfolder": entry.get("subfolder", ""),
+            "type": entry.get("type", "output"),
+        })
+        data, _ = comfy_get_bytes(f"/view?{params}", timeout=60)
+        upload_dir = COMFY_INPUT_DIR / "imagineai"
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        name = f"frame_{int(now())}_{uuid.uuid4().hex[:8]}.png"
+        (upload_dir / name).write_bytes(data)
+        return f"imagineai/{name}"
+    except Exception:
+        return ""
+
+
+def extract_last_frame_to_comfy_input(mp4_path: Path) -> str:
+    """Write the last frame of a clip into ComfyUI's input folder and return the
+    relative name for a LoadImage node, or "" if it couldn't be extracted."""
+    if not Path(COMFY_PYTHON).exists() or not mp4_path.exists():
+        return ""
+    upload_dir = COMFY_INPUT_DIR / "imagineai"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    name = f"frame_{int(now())}_{uuid.uuid4().hex[:8]}.png"
+    dst = upload_dir / name
+    try:
+        result = subprocess.run(
+            [COMFY_PYTHON, "-c", _LAST_FRAME_SRC, str(mp4_path), str(dst)],
+            capture_output=True, timeout=120,
+        )
+        if result.returncode != 0 or not dst.exists() or dst.stat().st_size == 0:
+            return ""
+        return f"imagineai/{name}"
+    except Exception:
+        return ""
+
+
+def local_video_title(model: str) -> str:
+    return {
+        "wan21_1_3b": "Wan 2.1 1.3B",
+        "wan22_ti2v_5b": "Wan 2.2 TI2V 5B",
+        "wan22_14b": "Wan 2.2 14B",
+    }.get(model, "Wan 2.2 14B")
+
+
+def run_local_video_block(job_id: str, kind: str, data: dict[str, Any],
+                          width: int, height: int, start_image_name: str,
+                          free_first: bool = False, emit_last_frame: bool = False) -> tuple[Path, str]:
+    """Render one block on ComfyUI. Returns (mp4 path, clean-last-frame name). The
+    frame name is "" when not requested or unavailable. Raises RuntimeError on a
+    ComfyUI error, TimeoutError on a stall, JobCancelled when the user stops it."""
+    graph_data = dict(data)
+    graph_data["width"] = width
+    graph_data["height"] = height
+    graph_data["emit_last_frame"] = emit_last_frame and WAN_CLEAN_SEED_FRAME
+    if kind == "wan21_1_3b":
+        graph_data["emit_last_frame"] = False  # 1.3B path has no continuity
+        graph = build_wan21_graph(graph_data)
+    elif kind == "wan22_ti2v_5b":
+        graph_data["start_image"] = start_image_name or ""
+        graph = build_wan22_ti2v_graph(graph_data)
+    else:
+        graph = build_wan22_graph(graph_data)
+    with COMFY_LOCK:
+        if free_first:
+            comfy_free_memory()  # free VRAM before a fresh/heavier model loads
+        prompt_id = queue_comfy_prompt(graph, "imagineai-video")
+        history = wait_for_history(prompt_id, COMFY_VIDEO_TIMEOUT,
+                                   on_state=lambda s: update_job(job_id, status=s),
+                                   should_cancel=lambda: job_cancel_requested(job_id))
+    err = extract_error(history)
+    if err:
+        raise RuntimeError(json.dumps(err, ensure_ascii=False))
+    entries = extract_entries(history, "video")
+    if not entries:
+        raise RuntimeError("ComfyUI returned no video for this block.")
+    frame_name = ""
+    if graph_data["emit_last_frame"]:
+        images = extract_entries(history, "image")
+        if images:
+            frame_name = fetch_comfy_image_to_input(images[-1])
+    return fetch_comfy_video_to_path(entries[0]), frame_name
+
+
+def render_wanvideo_single_pass(job_id: str, payload: dict[str, Any], aspect: str, prompt: str) -> None:
+    """Long, coherent local video via WanVideoWrapper: block-swap fits the model on 8GB
+    by streaming through RAM, and context windows render the whole clip in one pass, so
+    there is no per-block drift. Slower, but consistent from start to finish."""
+    total_seconds = clamp_int(payload.get("seconds"), 5, 1, LOCAL_MAX_STITCHED_SECONDS)
+    width, height = wan_block_dimensions(aspect)
+    title = "WanVideo 5B (long)"
+    data = {
+        "prompt": prompt,
+        "negative_prompt": payload.get("negativePrompt", DEFAULT_NEGATIVE_VIDEO),
+        "seconds": total_seconds,
+        "fps": payload.get("fps"),
+        "seed": payload.get("seed"),
+        "steps": payload.get("steps"),
+        "cfg": payload.get("cfg"),
+        "width": width,
+        "height": height,
+    }
+    graph = build_wanvideo_graph(data)
+    update_job(job_id, status="running", meta={
+        "engine": "local", "modelTitle": title, "model": "wanvideo_5b",
+        "targetSeconds": total_seconds,
+        "note": "Block-swap + context windows — one coherent pass. Slow but consistent; test short first.",
+    })
+    with COMFY_LOCK:
+        comfy_free_memory()
+        prompt_id = queue_comfy_prompt(graph, "imagineai-video")
+        history = wait_for_history(prompt_id, COMFY_VIDEO_TIMEOUT,
+                                   on_state=lambda s: update_job(job_id, status=s),
+                                   should_cancel=lambda: job_cancel_requested(job_id))
+    err = extract_error(history)
+    if err:
+        raise RuntimeError(json.dumps(err, ensure_ascii=False))
+    entries = extract_entries(history, "video")
+    if not entries:
+        raise RuntimeError("ComfyUI returned no video.")
+    mp4_url = entry_to_media_url(entries[0])
+    webm_url = transcode_entry_to_webm(entries[0])
+    update_job(job_id, status="done",
+               results=[{"url": webm_url or mp4_url, "type": "video", "mp4Url": mp4_url}],
+               meta={"engine": "local", "modelTitle": title, "model": "wanvideo_5b"})
+
+
+def render_local_stitched_video(job_id: str, payload: dict[str, Any], model: str, aspect: str,
+                                prompt: str, total_seconds: int, title: str) -> None:
+    """Render a long clip as short blocks and stitch them into one video. When the
+    TI2V 5B model is available, the last frame of each block seeds the next one so
+    the blocks flow together instead of hard-cutting. Adapts the block length down
+    if the GPU runs out of memory, and can be cancelled between/within blocks."""
+    full_w, full_h = wan_block_dimensions(aspect)
+
+    def dims_for(sc: float) -> tuple[int, int]:
+        w = max(32, int(round(full_w * sc / 32)) * 32)
+        h = max(32, int(round(full_h * sc / 32)) * 32)
+        return w, h
+
+    # Carrying a frame between blocks needs the image-to-video (TI2V 5B) model.
+    try:
+        info = detect_models()
+        ti2v_ok = bool(info.get("video", {}).get("wan22_ti2v_5b"))
+    except Exception:
+        ti2v_ok = False
+    continuity = ti2v_ok and model in ("wan22_14b", "wan22_ti2v_5b")
+
+    user_start = ""
+    if isinstance(payload.get("startImage"), str) and payload.get("startImage").strip():
+        user_start = save_start_image_for_comfy(payload.get("startImage"), payload.get("startImageName"))
+
+    # One fixed seed for the whole clip keeps the look (grain, palette, style) stable
+    # across blocks instead of re-rolling it every 10 seconds.
+    clip_seed = clamp_int(payload.get("seed"), random.randint(0, 2**32 - 1), 0, 2**63 - 1)
+    common = {
+        "negative_prompt": payload.get("negativePrompt", DEFAULT_NEGATIVE_VIDEO),
+        "fps": payload.get("fps"),
+        "steps": payload.get("steps"),
+        "cfg": payload.get("cfg"),
+        "seed": clip_seed,
+    }
+
+    produced: list[Path] = []
+    temp_frames: list[str] = []
+    prev_frame_name = user_start
+    prev_kind: str | None = None
+    block_seconds = min(LOCAL_BLOCK_SECONDS, total_seconds)
+    scale = 1.0            # resolution factor, lowered on OOM and kept for later blocks
+    downgraded = False     # once True, the heavy 14B is replaced by the lighter 5B
+    oom_retry = False      # free VRAM before the next attempt after an OOM
+    remaining = total_seconds
+    index = 0
+    started = now()
+    note = "" if (continuity or model == "wan21_1_3b") else (
+        "TI2V 5B not installed — blocks are joined without frame carry-over.")
+
+    def base_meta(**extra: Any) -> dict[str, Any]:
+        meta = {
+            "engine": "local", "modelTitle": title, "model": model,
+            "targetSeconds": total_seconds,
+            "producedSeconds": total_seconds - remaining,
+            "progress": round((total_seconds - remaining) / total_seconds, 3),
+            "elapsed": round(now() - started, 1),
+            "continuity": continuity, "note": note,
+        }
+        meta.update(extra)
+        return meta
+
+    try:
+        while remaining > 0:
+            if job_cancel_requested(job_id):
+                raise JobCancelled()
+            seg = min(block_seconds, remaining)
+            blocks_left = (remaining + block_seconds - 1) // block_seconds
+            block_total = index + blocks_left
+            width, height = dims_for(scale)
+            # Pick which model renders this block. The heavy 14B only opens the clip;
+            # continuation blocks use the lighter 5B (and take over entirely if 14B OOMs).
+            if model == "wan21_1_3b":
+                kind, start_name = "wan21_1_3b", ""
+            elif index == 0 and not prev_frame_name:
+                kind = "wan22_14b" if (model == "wan22_14b" and not downgraded) else "wan22_ti2v_5b"
+                start_name = ""
+            elif continuity:
+                kind, start_name = "wan22_ti2v_5b", prev_frame_name
+            else:
+                kind, start_name = model, ""
+
+            update_job(job_id, status="running", meta=base_meta(
+                phase="block", blockIndex=index + 1, blockTotal=block_total,
+                blockSeconds=seg, blockWidth=width, blockHeight=height))
+
+            data = dict(common)
+            data["seconds"] = seg
+            data["prompt"] = segment_prompt(prompt, index + 1, block_total)
+            will_continue = continuity and (remaining - seg) > 0
+            try:
+                path, clean_frame = run_local_video_block(
+                    job_id, kind, data, width, height, start_name,
+                    free_first=(prev_kind is None or kind != prev_kind or oom_retry),
+                    emit_last_frame=will_continue)
+            except JobCancelled:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                if not is_oom_like(exc):
+                    raise
+                # Out of memory — negotiate a lighter setting and retry this block:
+                # 1) smaller resolution, 2) drop the heavy 14B to 5B, 3) shorter block.
+                nsc = round(scale - 0.2, 2)
+                nw, nh = dims_for(nsc)
+                if nsc >= 0.4 and nw >= LOCAL_MIN_DIMENSION and nh >= LOCAL_MIN_DIMENSION and (nw < width or nh < height):
+                    scale, oom_retry = nsc, True
+                    update_job(job_id, status="running", meta=base_meta(
+                        phase="block", blockIndex=index + 1,
+                        note=f"GPU out of memory — retrying smaller ({nw}×{nh})."))
+                    continue
+                if model == "wan22_14b" and not downgraded and ti2v_ok and kind == "wan22_14b":
+                    downgraded, oom_retry = True, True
+                    note = "14B didn't fit on the GPU — using the lighter TI2V 5B for the whole clip."
+                    update_job(job_id, status="running", meta=base_meta(
+                        phase="block", blockIndex=index + 1, note=note))
+                    continue
+                if block_seconds > LOCAL_MIN_BLOCK_SECONDS:
+                    block_seconds, oom_retry = max(LOCAL_MIN_BLOCK_SECONDS, block_seconds // 2), True
+                    update_job(job_id, status="running", meta=base_meta(
+                        phase="block", blockIndex=index + 1,
+                        note=f"GPU out of memory — retrying at {block_seconds}s blocks."))
+                    continue
+                raise RuntimeError(
+                    "The GPU ran out of memory even at the smallest settings. Free VRAM "
+                    "(unload other ComfyUI models or stop Ollama/LLM models), pick a smaller "
+                    "ratio, and try again.")
+
+            oom_retry = False
+            produced.append(path)
+            prev_kind = kind
+            remaining -= seg
+            index += 1
+            if continuity and remaining > 0:
+                # Prefer the lossless frame ComfyUI saved; fall back to an ffmpeg grab.
+                frame_name = clean_frame or extract_last_frame_to_comfy_input(path)
+                if frame_name:
+                    prev_frame_name = frame_name
+                    temp_frames.append(frame_name)
+                else:
+                    continuity = False
+                    note = "Couldn't carry a frame between blocks — the rest are joined without continuity."
+
+        if job_cancel_requested(job_id):
+            raise JobCancelled()
+        if not produced:
+            raise RuntimeError("No video blocks were produced.")
+
+        update_job(job_id, status="running", meta=base_meta(
+            phase="stitch", blockTotal=len(produced), progress=0.99,
+            note="Stitching the blocks together…"))
+        combined_url = (transcode_mp4_path_to_webm(produced[0]) if len(produced) == 1
+                        else concat_mp4_paths_to_webm(produced))
+        if not combined_url:
+            raise RuntimeError("Rendered the blocks but couldn't stitch them into one video.")
+        update_job(job_id, status="done",
+                   results=[{"url": combined_url, "type": "video",
+                             "segments": len(produced), "seconds": total_seconds}],
+                   meta=base_meta(phase="done", blockTotal=len(produced), progress=1.0))
+    finally:
+        for clip in produced:
+            try:
+                clip.unlink(missing_ok=True)
+            except OSError:
+                pass
+        for name in temp_frames:
+            try:
+                (COMFY_INPUT_DIR / name).unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def transcode_entry_to_webm(entry: dict[str, Any]) -> str | None:
@@ -2703,6 +3238,10 @@ class Handler(BaseHTTPRequestHandler):
                 except ValueError as exc:
                     return self._json(400, {"error": str(exc)})
                 return self._json(200, self.api_secrets())
+            if path.startswith("/api/jobs/") and path.endswith("/cancel"):
+                job_id = path[len("/api/jobs/"):-len("/cancel")]
+                cancelled = request_job_cancel(job_id)
+                return self._json(200 if cancelled else 404, {"cancelled": cancelled})
             if path == "/api/generate/image":
                 if not str(data.get("prompt") or "").strip():
                     return self._json(400, {"error": "Prompt is required."})

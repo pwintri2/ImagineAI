@@ -28,13 +28,14 @@ Seedance2.ai, or xAI Grok Imagine for images and videos.
   key.
 - Optional Seedance2.ai still-frame and video generation with a locally stored
   `seedance` key.
-- Optional ModelsLab SDXL image and text-to-video generation, including the
-  `wan2.6-t2v` video choice, with a locally stored `sdxl`, `modelslab`, or
-  `wan2.6-t2v` key.
+- Optional ModelsLab / Stable Diffusion API image and text-to-video generation,
+  including the `wan2.6-t2v` video choice, with a locally stored `sdxl`,
+  `modelslab`, `stable-diffusion-api`, or `wan2.6-t2v` key.
 - Optional Stability image generation with a locally stored `stability` or
   `stability-ai` key.
-- Grok, Atlas, and ModelsLab video durations up to 30 seconds in the UI; longer
-  cloud videos are generated as multiple provider segments and stitched locally.
+- Grok, Atlas, Stable Diffusion, and ModelsLab video durations up to 30 seconds
+  in the UI; longer cloud videos are generated as multiple provider segments
+  and stitched locally.
 - Browser UI plus Tauri desktop packaging.
 - Local history, background jobs, media proxying, and ComfyUI model detection.
 - No third-party Python packages required for the server.
@@ -51,8 +52,9 @@ Seedance2.ai, or xAI Grok Imagine for images and videos.
   `atlas`, `atlascloud`, or `atlas-cloud`.
 - Optional: a Seedance2.ai API key saved as `seedance`, `seedance2`, or
   `seedance2-ai`.
-- Optional: a ModelsLab API key saved as `sdxl`, `modelslab`, `free-api`,
-  `vrije-api`, or `wan2.6-t2v`.
+- Optional: a ModelsLab / Stable Diffusion API key saved as `sdxl`,
+  `modelslab`, `stable-diffusion-api`, `free-api`, `vrije-api`, or
+  `wan2.6-t2v`.
 - Optional: a Stability AI API key saved as `stability` or `stability-ai`.
 
 ## Quick Start
@@ -116,9 +118,10 @@ The Video tab accepts an optional start image. Start images are wired for:
 - xAI Grok Imagine image-to-video.
 - Atlas Cloud image-to-video.
 
-Seedance and ModelsLab video remain text-to-video only in this app. The public
-Seedance2.ai API accepts image-to-video inputs as public image URLs; ImagineAI
-does not currently upload local start images to a public URL for Seedance.
+Seedance and Stable Diffusion / ModelsLab video remain text-to-video only in
+this app. The public Seedance2.ai API accepts image-to-video inputs as public
+image URLs; ImagineAI does not currently upload local start images to a public
+URL for Seedance.
 
 ## Settings And Keys
 
@@ -148,7 +151,8 @@ You can provide the Seedance2.ai key with `SEEDANCE_API_KEY` or
 `SEEDANCE2_API_KEY`, or save it in Settings as `seedance`, `seedance2`, or
 `seedance2-ai`.
 You can provide the ModelsLab key with `MODELSLAB_API_KEY`, or save it in
-Settings as `sdxl`, `modelslab`, `free-api`, `vrije-api`, or `wan2.6-t2v`.
+Settings as `sdxl`, `modelslab`, `stable-diffusion-api`, `free-api`,
+`vrije-api`, or `wan2.6-t2v`.
 You can provide the Stability key with `STABILITY_API_KEY`, or save it in
 Settings as `stability` or `stability-ai`.
 Other saved keys are shown as masked status hints. Supported provider aliases

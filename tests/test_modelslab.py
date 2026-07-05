@@ -67,6 +67,11 @@ class ModelsLabTests(unittest.TestCase):
              patch.dict(os.environ, {"MODELSLAB_API_KEY": ""}):
             self.assertEqual(server.modelslab_key(), ("wan26-secret", "wan2.6-t2v"))
 
+    def test_stable_diffusion_alias_is_usable_as_modelslab_key(self):
+        with patch.object(server, "load_secrets", return_value={"stable-diffusion-api": "sd-secret"}), \
+             patch.dict(os.environ, {"MODELSLAB_API_KEY": ""}):
+            self.assertEqual(server.modelslab_key(), ("sd-secret", "stable-diffusion-api"))
+
     def test_video_payload_uses_modelslab_minimum_fps(self):
         calls = []
 
@@ -129,6 +134,30 @@ class ModelsLabTests(unittest.TestCase):
         self.assertEqual(job["status"], "done")
         self.assertEqual(job["meta"]["modelTitle"], "wan2.6-t2v")
         self.assertEqual(job["meta"]["model"], "wan2.6-t2v")
+
+    def test_stable_diffusion_video_choice_uses_modelslab_model_id(self):
+        calls = []
+        job_id = server.make_job("video")
+
+        def fake_generate(prompt, aspect, seconds, model, key, on_progress=None):
+            calls.append((prompt, aspect, seconds, model, key))
+            return {"url": "/api/local-media?name=stable-diffusion.mp4", "type": "video"}
+
+        with patch.object(server, "load_settings", return_value={"modelslabVideoModel": "wan2.2"}), \
+             patch.object(server, "modelslab_key", return_value=("secret", "stable-diffusion-api")), \
+             patch.object(server, "modelslab_generate_video", side_effect=fake_generate):
+            server.run_video_job(job_id, {
+                "prompt": "a silver train crossing a frozen bridge",
+                "aspect": "wide",
+                "seconds": 8,
+                "model": "stable-diffusion-api",
+            })
+
+        self.assertEqual(calls, [("a silver train crossing a frozen bridge", "wide", 8, "wan2.2", "secret")])
+        job = server.get_job(job_id)
+        self.assertEqual(job["status"], "done")
+        self.assertEqual(job["meta"]["modelTitle"], "Stable Diffusion Video")
+        self.assertEqual(job["meta"]["model"], "wan2.2")
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 let galleryEl;
+let cancelHandler = null;
 
 export function init() {
   galleryEl = document.getElementById('video-gallery');
@@ -8,11 +9,25 @@ export function init() {
 
 export function renderLoading(meta = {}) {
   if (!galleryEl) return;
+  cancelHandler = null;
+  const controls = meta.showControls ? `
+      <div class="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+        <div id="videoProgressBar" class="h-full rounded-full bg-violet-500 transition-all duration-500" style="width:0%"></div>
+      </div>` : '';
+  const cancel = meta.showControls ? `
+      <div class="mt-3 flex justify-center">
+        <button type="button" data-cancel-video
+          class="rounded-lg border border-white/10 bg-white/5 px-4 py-1.5 text-xs font-medium text-slate-300 transition hover:border-red-500/40 hover:text-red-300">
+          Cancel
+        </button>
+      </div>` : '';
   galleryEl.innerHTML = `
     <div class="fade-in">
       <div class="skeleton rounded-2xl aspect-video"></div>
-      <p class="text-center text-xs text-slate-500 mt-4" id="videoStatus">Crafting your video…</p>
-      <p class="text-center text-[11px] text-slate-600 mt-1">${escapeHtml(meta.modelTitle || '')}</p>
+      ${controls}
+      <p class="text-center text-xs text-slate-500 mt-3" id="videoStatus">Crafting your video…</p>
+      <p class="text-center text-[11px] text-slate-600 mt-1 min-h-[14px]" id="videoNote">${escapeHtml(meta.modelTitle || '')}</p>
+      ${cancel}
     </div>
   `;
 }
@@ -20,6 +35,42 @@ export function renderLoading(meta = {}) {
 export function updateStatus(text) {
   const el = document.getElementById('videoStatus');
   if (el) el.textContent = text;
+}
+
+export function updateProgress(fraction, note) {
+  const bar = document.getElementById('videoProgressBar');
+  if (bar && Number.isFinite(fraction)) {
+    const pct = Math.max(0, Math.min(100, Math.round(fraction * 100)));
+    bar.style.width = `${pct}%`;
+  }
+  if (note != null) {
+    const el = document.getElementById('videoNote');
+    if (el && note) el.textContent = note;
+  }
+}
+
+// Register a callback fired when the user clicks Cancel during a render.
+export function onCancelClick(fn) { cancelHandler = fn; }
+
+export function markCancelling() {
+  const btn = galleryEl?.querySelector('[data-cancel-video]');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Cancelling…';
+    btn.classList.add('opacity-60', 'cursor-not-allowed');
+  }
+  updateStatus('Stopping after the current block…');
+}
+
+export function renderCancelled() {
+  if (!galleryEl) return;
+  galleryEl.innerHTML = `
+    <div class="fade-in text-center py-12">
+      <div class="text-4xl mb-3">🛑</div>
+      <p class="text-sm text-slate-400">Video cancelled.</p>
+      <p class="text-xs text-slate-600 mt-1">Nothing was saved. Adjust and try again when you're ready.</p>
+    </div>
+  `;
 }
 
 export function renderResults(videos, meta = {}) {
@@ -83,6 +134,11 @@ function wireVideoFallback(video) {
 }
 
 function handleClick(e) {
+  const cancelBtn = e.target.closest('[data-cancel-video]');
+  if (cancelBtn) {
+    if (!cancelBtn.disabled && cancelHandler) cancelHandler();
+    return;
+  }
   const btn = e.target.closest('[data-save-video]');
   if (!btn) return;
   const input = document.getElementById('videoFileName');

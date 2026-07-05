@@ -14,6 +14,8 @@ const RATIOS = [
   { key: 'portrait', label: '3:4' },
   { key: 'tall', label: '9:16' },
 ];
+const STABLE_DIFFUSION_VIDEO_MODELS = ['sdxl', 'stable-diffusion-api'];
+const MODELSLAB_VIDEO_MODELS = [...STABLE_DIFFUSION_VIDEO_MODELS, 'wan2.6-t2v'];
 
 let section;
 let promptInput;
@@ -28,8 +30,12 @@ function chip(label, value, group, active, disabled = false) {
   return `<button type="button" ${disabled ? 'disabled' : ''} class="vchip px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${disabled ? '' : 'cursor-pointer'} whitespace-nowrap ${base}" data-group="${group}" data-value="${value}">${label}</button>`;
 }
 
+const LOCAL_WAN_MODELS = ['wanvideo_5b', 'wan22_14b', 'wan22_ti2v_5b', 'wan21_1_3b'];
+
 function maxSecondsForModel(model) {
-  if (['xai', 'atlas', 'sdxl', 'wan2.6-t2v', 'seedance'].includes(model)) return 30;
+  if (['xai', 'atlas', 'seedance'].includes(model)) return 30;
+  if (MODELSLAB_VIDEO_MODELS.includes(model)) return 120;   // cloud, stitched — no local VRAM used
+  if (LOCAL_WAN_MODELS.includes(model)) return 120;   // rendered in ~10s blocks, stitched together
   return 5;
 }
 
@@ -45,19 +51,25 @@ function modelAvailable(id) {
   if (id === 'xai') return !!config.xaiConfigured;
   if (id === 'atlas') return !!config.atlasConfigured;
   if (id === 'seedance') return !!config.seedanceConfigured;
-  if (id === 'sdxl' || id === 'wan2.6-t2v') return !!config.modelslabConfigured;
+  if (MODELSLAB_VIDEO_MODELS.includes(id)) return !!config.modelslabConfigured;
   return !!(config.comfyReachable && config.models?.video?.[id]);
+}
+
+function isStableDiffusionVideo(model) {
+  return STABLE_DIFFUSION_VIDEO_MODELS.includes(model);
 }
 
 export function render() {
   if (!section) return;
   const s = getState();
+  const wanVideoOk = modelAvailable('wanvideo_5b');
   const wan22Ok = modelAvailable('wan22_14b');
   const wanTi2vOk = modelAvailable('wan22_ti2v_5b');
   const wan21Ok = modelAvailable('wan21_1_3b');
   const xaiOk = modelAvailable('xai');
   const atlasOk = modelAvailable('atlas');
   const seedanceOk = modelAvailable('seedance');
+  const stableDiffusionOk = modelAvailable('stable-diffusion-api');
   const showModelslab = !!s.config.modelslabConfigured;
   const selectedImage = s._draftVideoStartImage;
   const imageError = s._draftVideoStartImageError || '';
@@ -83,8 +95,9 @@ export function render() {
           ${chip(`𝕏 ${VIDEO_MODELS.xai.title}`, 'xai', 'model', s.videoModel === 'xai', !xaiOk)}
           ${chip(`◆ ${VIDEO_MODELS.atlas.title}`, 'atlas', 'model', s.videoModel === 'atlas', !atlasOk)}
           ${chip(`◈ ${VIDEO_MODELS.seedance.title}`, 'seedance', 'model', s.videoModel === 'seedance', !seedanceOk)}
-          ${showModelslab ? chip(`▣ ${VIDEO_MODELS.sdxl.title}`, 'sdxl', 'model', s.videoModel === 'sdxl', !modelAvailable('sdxl')) : ''}
+          ${chip(`▣ ${VIDEO_MODELS['stable-diffusion-api'].title}`, 'stable-diffusion-api', 'model', isStableDiffusionVideo(s.videoModel), !stableDiffusionOk)}
           ${showModelslab ? chip(`▣ ${VIDEO_MODELS['wan2.6-t2v'].title}`, 'wan2.6-t2v', 'model', s.videoModel === 'wan2.6-t2v', !modelAvailable('wan2.6-t2v')) : ''}
+          ${chip(`🎬 ${VIDEO_MODELS.wanvideo_5b.title}`, 'wanvideo_5b', 'model', s.videoModel === 'wanvideo_5b', !wanVideoOk)}
           ${chip(`✨ ${VIDEO_MODELS.wan22_14b.title}`, 'wan22_14b', 'model', s.videoModel === 'wan22_14b', !wan22Ok)}
           ${chip(`🎞 ${VIDEO_MODELS.wan22_ti2v_5b.title}`, 'wan22_ti2v_5b', 'model', s.videoModel === 'wan22_ti2v_5b', !wanTi2vOk)}
           ${chip(`🪶 ${VIDEO_MODELS.wan21_1_3b.title}`, 'wan21_1_3b', 'model', s.videoModel === 'wan21_1_3b', !wan21Ok)}
@@ -122,7 +135,7 @@ export function render() {
         <span id="videoBtnIcon">🎬</span><span id="videoBtnText">Create Video</span>
       </button>
 
-      <p class="text-center text-[11px] text-slate-600">${videoHint(s, wan22Ok || wanTi2vOk || wan21Ok || xaiOk || atlasOk || seedanceOk)}</p>
+      <p class="text-center text-[11px] text-slate-600">${videoHint(s, wanVideoOk || wan22Ok || wanTi2vOk || wan21Ok || xaiOk || atlasOk || seedanceOk || stableDiffusionOk)}</p>
     </div>
   `;
 
@@ -149,11 +162,24 @@ function videoHint(s, anyModel) {
     if (!s.config.seedanceConfigured) return 'Add a Seedance key in Settings as seedance to generate Seedance videos.';
     return `Seedance 2.0 video via ${escapeHtml(s.config.seedanceVideoModel || 'seedance-2-0')} · 16-30s is stitched locally from multiple Seedance segments.`;
   }
-  if (s.videoModel === 'sdxl') return 'ModelsLab text-to-video runs in the cloud · 6-30s is stitched locally from multiple ModelsLab segments.';
-  if (s.videoModel === 'wan2.6-t2v') return 'wan2.6-t2v runs through ModelsLab · 6-30s is stitched locally from multiple provider segments.';
+  if (isStableDiffusionVideo(s.videoModel)) {
+    if (!s.config.modelslabConfigured) return 'Add a ModelsLab or Stable Diffusion API key in Settings to generate Stable Diffusion videos.';
+    return `Stable Diffusion video via ${escapeHtml(s.config.modelslabVideoModel || 'wan2.2')} · runs in the cloud (no local VRAM) · up to 120s stitched from ~5s segments, so long clips use more API credits.`;
+  }
+  if (s.videoModel === 'wan2.6-t2v') return 'wan2.6-t2v runs in the cloud via ModelsLab (no local GPU/VRAM) · up to 120s stitched from ~5s segments · long clips use more API credits, and continuity is prompt-based.';
   if (!s.config.comfyReachable) return 'ComfyUI not detected — start it to generate video.';
   if (!anyModel) return 'No Wan video model found in ComfyUI.';
-  return 'Text-to-video runs locally on your GPU · can take a few minutes.';
+  if (s.videoModel === 'wanvideo_5b') {
+    if (!modelAvailable('wanvideo_5b')) return 'Install the WanVideoWrapper custom node in ComfyUI to use this.';
+    return 'WanVideoWrapper · block-swap streams the model through system RAM (fits 8GB) and context windows keep one coherent clip up to 120s. Slow but no drift — test a short clip first.';
+  }
+  if (s.videoSeconds > 10) {
+    const cont = modelAvailable('wan22_ti2v_5b')
+      ? 'each ~10s block seeds the next one from its last frame for a continuous flow'
+      : 'blocks are joined end to end (install TI2V 5B for frame-accurate continuity)';
+    return `Long clips render locally in ~10s blocks — ${cont}. Block size drops automatically if the GPU runs low; you can cancel anytime. This can take a while.`;
+  }
+  return 'Text-to-video runs locally on your GPU · can take a few minutes. Up to 120s renders in stitched ~10s blocks.';
 }
 
 function handleClick(e) {
