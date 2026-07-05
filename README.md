@@ -1,7 +1,7 @@
 # ImagineAI
 
 <p align="center">
-  <img src="src-tauri/icons/icon.png" alt="ImagineAI app icon" width="96" height="96">
+  <img src="assets/banner.svg" alt="ImagineAI — local-first image & video studio" width="820">
 </p>
 
 ImagineAI is a local-first image and video studio for people who want a clean,
