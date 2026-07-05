@@ -1,0 +1,77 @@
+<svg width="1200" height="340" viewBox="0 0 1200 340" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="ImagineAI — local-first image and video studio">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="340" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0a0e1f"/>
+      <stop offset="0.55" stop-color="#2a1063"/>
+      <stop offset="1" stop-color="#7c3aed"/>
+    </linearGradient>
+    <linearGradient id="title" x1="80" y1="0" x2="720" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#c9b8ff"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientTransform="translate(980 70) rotate(120) scale(320)" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#a78bfa" stop-opacity="0.6"/>
+      <stop offset="1" stop-color="#a78bfa" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="sun" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fde68a"/>
+      <stop offset="1" stop-color="#fb7185"/>
+    </linearGradient>
+    <pattern id="dots" width="26" height="26" patternUnits="userSpaceOnUse">
+      <circle cx="1.5" cy="1.5" r="1.5" fill="#ffffff" fill-opacity="0.06"/>
+    </pattern>
+  </defs>
+
+  <!-- backdrop -->
+  <rect width="1200" height="340" rx="30" fill="url(#bg)"/>
+  <rect width="1200" height="340" rx="30" fill="url(#dots)"/>
+  <rect width="1200" height="340" rx="30" fill="url(#glow)"/>
+  <rect x="1.5" y="1.5" width="1197" height="337" rx="29" fill="none" stroke="#ffffff" stroke-opacity="0.10"/>
+
+  <!-- right-side generative motif: a framed "render" with a sun over hills -->
+  <g transform="translate(795 78)">
+    <rect x="0" y="0" width="300" height="184" rx="18" fill="#0b1024" fill-opacity="0.55" stroke="#ffffff" stroke-opacity="0.12"/>
+    <clipPath id="frame"><rect x="10" y="10" width="280" height="164" rx="12"/></clipPath>
+    <g clip-path="url(#frame)">
+      <rect x="10" y="10" width="280" height="164" fill="#141a33"/>
+      <circle cx="205" cy="72" r="30" fill="url(#sun)"/>
+      <path d="M10 150 Q70 104 130 138 T290 120 V174 H10 Z" fill="#7c3aed" fill-opacity="0.75"/>
+      <path d="M10 168 Q90 130 165 158 T290 150 V174 H10 Z" fill="#22d3ee" fill-opacity="0.55"/>
+    </g>
+    <!-- film-strip perforations -->
+    <g fill="#ffffff" fill-opacity="0.16">
+      <rect x="-16" y="18" width="8" height="12" rx="2"/>
+      <rect x="-16" y="52" width="8" height="12" rx="2"/>
+      <rect x="-16" y="86" width="8" height="12" rx="2"/>
+      <rect x="-16" y="120" width="8" height="12" rx="2"/>
+      <rect x="-16" y="154" width="8" height="12" rx="2"/>
+    </g>
+  </g>
+
+  <!-- sparkles -->
+  <g fill="#ffffff">
+    <path d="M726 60 l6 16 16 6 -16 6 -6 16 -6 -16 -16 -6 16 -6 Z" fill-opacity="0.85"/>
+    <path d="M690 250 l4 11 11 4 -11 4 -4 11 -4 -11 -11 -4 11 -4 Z" fill-opacity="0.5"/>
+    <path d="M1135 235 l4 11 11 4 -11 4 -4 11 -4 -11 -11 -4 11 -4 Z" fill-opacity="0.45"/>
+  </g>
+
+  <!-- wordmark -->
+  <text x="82" y="150" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="86" font-weight="800" fill="url(#title)" letter-spacing="-2">ImagineAI</text>
+  <text x="86" y="196" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="27" font-weight="500" fill="#dcd3ff" fill-opacity="0.92">Local-first image &amp; video studio</text>
+
+  <!-- feature pills -->
+  <g font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="17" font-weight="600" fill="#ede9ff">
+    <g>
+      <rect x="86" y="230" width="118" height="38" rx="19" fill="#ffffff" fill-opacity="0.10" stroke="#ffffff" stroke-opacity="0.18"/>
+      <text x="145" y="255" text-anchor="middle">Images</text>
+    </g>
+    <g>
+      <rect x="214" y="230" width="110" height="38" rx="19" fill="#ffffff" fill-opacity="0.10" stroke="#ffffff" stroke-opacity="0.18"/>
+      <text x="269" y="255" text-anchor="middle">Video</text>
+    </g>
+    <g>
+      <rect x="334" y="230" width="196" height="38" rx="19" fill="#ffffff" fill-opacity="0.10" stroke="#ffffff" stroke-opacity="0.18"/>
+      <text x="432" y="255" text-anchor="middle">Runs on your GPU</text>
+    </g>
+  </g>
+</svg>
