@@ -92,6 +92,9 @@ ATLAS_WAN27_MAX_SECONDS_PER_REQUEST = 15
 ATLAS_MAX_STITCHED_SECONDS = 30
 ATLAS_IMAGE_TIMEOUT = float(os.environ.get("IMAGINEAI_ATLAS_IMAGE_TIMEOUT", "600"))
 ATLAS_VIDEO_TIMEOUT = float(os.environ.get("IMAGINEAI_ATLAS_VIDEO_TIMEOUT", "1200"))
+# Wan's output moderation (copyright/IP/sensitive-content) is stochastic and often
+# misfires on harmless prompts; retry a flagged clip this many extra times.
+ATLAS_MODERATION_RETRIES = max(0, min(5, int(os.environ.get("ATLAS_MODERATION_RETRIES", "2"))))
 SEEDANCE_VIDEO_TIMEOUT = float(os.environ.get("IMAGINEAI_SEEDANCE_VIDEO_TIMEOUT", "1800"))
 
 # Local Wan long-form video: render in blocks and stitch them into one clip.
@@ -1173,8 +1176,18 @@ def xai_public_video_result(result: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def xai_images_list(value: object) -> list[str]:
+    """Normalise a start image (str) or a list of images into a clean list of
+    non-empty data-URL/URL strings."""
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, list):
+        return [v for v in value if isinstance(v, str) and v.strip()]
+    return []
+
+
 def xai_generate_video_clip(prompt: str, aspect: str, duration: int, model: str, key: str,
-                            start_image: object = "", on_progress=None) -> dict[str, Any]:
+                            images: object = "", on_progress=None) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "model": model,
         "prompt": prompt,
@@ -1182,9 +1195,16 @@ def xai_generate_video_clip(prompt: str, aspect: str, duration: int, model: str,
         "aspect_ratio": ASPECT_TO_XAI.get(aspect, "16:9"),
         "resolution": "720p",
     }
-    if isinstance(start_image, str) and start_image.strip():
-        decode_image_data_url(start_image)
-        payload["image"] = {"url": start_image}
+    imgs = xai_images_list(images)
+    if len(imgs) >= 2:
+        # Multiple images: mix them as style/content references (reference-to-video),
+        # which blends them instead of locking the first frame.
+        for url in imgs:
+            decode_image_data_url(url)
+        payload["reference_images"] = [{"url": url} for url in imgs]
+    elif len(imgs) == 1:
+        decode_image_data_url(imgs[0])
+        payload["image"] = {"url": imgs[0]}
 
     started = xai_request_json("/videos/generations", key, payload, method="POST", timeout=120)
     request_id = str(started.get("request_id") or "").strip()
@@ -1234,10 +1254,12 @@ def segment_prompt(prompt: str, index: int, total: int) -> str:
 
 def xai_generate_video(prompt: str, aspect: str, seconds: object, model: str, key: str,
                        start_image: object = "", on_progress=None) -> dict[str, Any]:
+    images = xai_images_list(start_image)
+    is_reference_mix = len(images) >= 2
     duration = clamp_int(seconds, 5, 1, XAI_MAX_STITCHED_SECONDS)
     if duration <= XAI_MAX_SECONDS_PER_REQUEST:
         return xai_public_video_result(
-            xai_generate_video_clip(prompt, aspect, duration, model, key, start_image, on_progress)
+            xai_generate_video_clip(prompt, aspect, duration, model, key, images, on_progress)
         )
 
     remaining = duration
@@ -1254,13 +1276,16 @@ def xai_generate_video(prompt: str, aspect: str, seconds: object, model: str, ke
             if on_progress:
                 on_progress(f"segment {idx}/{total_segments}: {status}", progress)
 
+        # Reference images shape the whole clip, so keep them on every segment; a single
+        # start frame only seeds the opening segment.
+        segment_images = images if is_reference_mix else (images if index == 1 else [])
         clips.append(xai_generate_video_clip(
             segment_prompt(prompt, index, total),
             aspect,
             segment,
             model,
             key,
-            start_image if index == 1 else "",
+            segment_images,
             on_progress=segment_progress,
         ))
 
@@ -1725,6 +1750,27 @@ def atlas_public_video_result(result: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in result.items() if k != "mp4Path"}
 
 
+def atlas_error_is_output_moderation(error: object) -> bool:
+    """True when the provider's content filter rejected the *generated* video
+    (copyright/IP/sensitive-content). Input-side prompt rejections don't count:
+    those are deterministic, so resubmitting the same prompt cannot succeed."""
+    text = str(error or "").lower()
+    if not any(marker in text for marker in (
+        "copyright",
+        "infringement",
+        "intellectual property",
+        "sensitive",
+        "inappropriate",
+        "content policy",
+        "content filter",
+        "moderation",
+    )):
+        return False
+    if "input" in text or "prompt contains" in text:
+        return False
+    return "output" in text or "generated" in text
+
+
 def atlas_video_segment_lengths(seconds: object, model_id: str = "") -> list[int]:
     if atlas_is_wan27_model(model_id):
         remaining = clamp_int(seconds, 5, 2, ATLAS_MAX_STITCHED_SECONDS)
@@ -1777,31 +1823,62 @@ def atlas_generate_video_clip(prompt: str, aspect: str, seconds: object, model: 
         if on_progress:
             on_progress("uploading image")
         payload["image"] = atlas_upload_media(start_image, key, start_image_name)
-    try:
-        started = atlas_request_json("/model/generateVideo", key, payload, method="POST", timeout=120)
-    except AtlasHTTPError as exc:
-        if exc.code == 403:
-            reason = str(exc.message or "").strip()
-            if "coding plan" in reason.lower() and "not support" in reason.lower():
-                detail = (
-                    f"Atlas returned 403 for {model_id}: this Atlas Coding Plan token does not support video generation. "
-                    "There is no Atlas video model this token can use here; add a full Atlas Cloud API key/plan, "
-                    "or use ModelsLab, xAI, or local Wan for video."
-                )
-            else:
-                detail = (
-                    f"Atlas rejected video generation with 403 for model {model_id}. "
-                    "Check Atlas credits/model access, or try another Atlas video model in Settings."
-                )
-            if reason:
-                detail = f"{detail} Atlas said: {reason}"
-            raise AtlasModelAccessError(
-                model_id,
-                detail,
-            ) from exc
-        raise
-    request_id = atlas_prediction_id(started)
-    result = atlas_poll_result(request_id, key, on_progress=on_progress, timeout=ATLAS_VIDEO_TIMEOUT, interval=5)
+    # Only Wan 2.7 gets moderation retries: its payload carries the knobs
+    # (prompt_extend, seed) that give a resubmission a real chance of passing.
+    retries = ATLAS_MODERATION_RETRIES if atlas_is_wan27_model(model_id) else 0
+    if retries and atlas_wan27_seed() >= 0:
+        retries = 1  # pinned seed stays pinned; only the prompt_extend toggle can change the outcome
+    attempts = 1 + retries
+    result: dict[str, Any] = {}
+    for attempt in range(1, attempts + 1):
+        if attempt > 1:
+            # The output filter is stochastic, and prompt_extend's LLM rewrite is
+            # what usually introduces the IP-adjacent wording that trips it —
+            # retry without the extension, on a fresh seed (unless one is pinned).
+            payload["prompt_extend"] = False
+            if atlas_wan27_seed() < 0:
+                payload["seed"] = random.randint(0, 2147483647)
+        try:
+            started = atlas_request_json("/model/generateVideo", key, payload, method="POST", timeout=120)
+        except AtlasHTTPError as exc:
+            if exc.code == 403:
+                reason = str(exc.message or "").strip()
+                if "coding plan" in reason.lower() and "not support" in reason.lower():
+                    detail = (
+                        f"Atlas returned 403 for {model_id}: this Atlas Coding Plan token does not support video generation. "
+                        "There is no Atlas video model this token can use here; add a full Atlas Cloud API key/plan, "
+                        "or use ModelsLab, xAI, or local Wan for video."
+                    )
+                else:
+                    detail = (
+                        f"Atlas rejected video generation with 403 for model {model_id}. "
+                        "Check Atlas credits/model access, or try another Atlas video model in Settings."
+                    )
+                if reason:
+                    detail = f"{detail} Atlas said: {reason}"
+                raise AtlasModelAccessError(
+                    model_id,
+                    detail,
+                ) from exc
+            raise
+        request_id = atlas_prediction_id(started)
+        try:
+            result = atlas_poll_result(request_id, key, on_progress=on_progress, timeout=ATLAS_VIDEO_TIMEOUT, interval=5)
+            break
+        except RuntimeError as exc:
+            # AtlasHTTPError also subclasses RuntimeError, but an HTTP failure while
+            # polling is not a moderation verdict — let it surface unchanged.
+            if isinstance(exc, AtlasHTTPError) or not atlas_error_is_output_moderation(exc):
+                raise
+            if attempt >= attempts:
+                raise RuntimeError(
+                    f"Atlas' content filter blocked this video ({attempts} attempt{'s' if attempts != 1 else ''}; "
+                    f'provider message: "{exc}"). This filter judges the generated video, not your '
+                    "prompt, and often misfires on harmless prompts. Reword the prompt (avoid brands, "
+                    "franchises, or celebrity look-alikes), try again, or switch to a local Wan model."
+                ) from exc
+            if on_progress:
+                on_progress(f"content filter flagged the output; retrying ({attempt}/{attempts - 1})")
     outputs = atlas_extract_outputs(result)
     remote_url = next((url for url in outputs if url.startswith(("http://", "https://"))), "")
     if not remote_url:
@@ -2568,7 +2645,7 @@ def run_video_job(job_id: str, payload: dict[str, Any]) -> None:
 
             result = xai_generate_video(
                 prompt, aspect, payload.get("seconds"), xai_model, key,
-                payload.get("startImage"), on_progress=on_xai_progress,
+                payload.get("startImages") or payload.get("startImage"), on_progress=on_xai_progress,
             )
             update_job(job_id, status="done", results=[result],
                        meta={"engine": "xai", "modelTitle": "Grok Imagine Video", "model": xai_model})
@@ -2933,9 +3010,25 @@ def render_local_stitched_video(job_id: str, payload: dict[str, Any], model: str
         ti2v_ok = False
     continuity = ti2v_ok and model in ("wan22_14b", "wan22_ti2v_5b")
 
-    user_start = ""
-    if isinstance(payload.get("startImage"), str) and payload.get("startImage").strip():
-        user_start = save_start_image_for_comfy(payload.get("startImage"), payload.get("startImageName"))
+    # Uploaded start images become keyframes: image i anchors the block nearest
+    # fraction i/N of the clip, so a long clip travels through them in order. A single
+    # image just seeds the opening block (the original start-image behaviour).
+    raw_images = payload.get("startImages")
+    if not isinstance(raw_images, list) or not raw_images:
+        single = payload.get("startImage")
+        raw_images = [single] if isinstance(single, str) and single.strip() else []
+    keyframe_names: list[str] = []
+    for data_url in raw_images[:8]:
+        if isinstance(data_url, str) and data_url.strip():
+            try:
+                saved = save_start_image_for_comfy(data_url)
+            except Exception:  # noqa: BLE001 — skip an unreadable image, keep the rest
+                saved = ""
+            if saved:
+                keyframe_names.append(saved)
+    use_keyframes = bool(keyframe_names) and ti2v_ok
+    kf_targets = [i / len(keyframe_names) for i in range(len(keyframe_names))]
+    kf_idx = 0
 
     # One fixed seed for the whole clip keeps the look (grain, palette, style) stable
     # across blocks instead of re-rolling it every 10 seconds.
@@ -2949,8 +3042,8 @@ def render_local_stitched_video(job_id: str, payload: dict[str, Any], model: str
     }
 
     produced: list[Path] = []
-    temp_frames: list[str] = []
-    prev_frame_name = user_start
+    temp_frames: list[str] = list(keyframe_names)  # also cleaned up at the end
+    prev_frame_name = ""  # keyframe anchoring seeds the opening block when images exist
     prev_kind: str | None = None
     block_seconds = min(LOCAL_BLOCK_SECONDS, total_seconds)
     scale = 1.0            # resolution factor, lowered on OOM and kept for later blocks
@@ -2982,9 +3075,20 @@ def render_local_stitched_video(job_id: str, payload: dict[str, Any], model: str
             blocks_left = (remaining + block_seconds - 1) // block_seconds
             block_total = index + blocks_left
             width, height = dims_for(scale)
+            # Is a keyframe due at this point in the timeline? If so, anchor this block
+            # to the uploaded image (image-to-video) instead of carrying the last frame.
+            anchor = ""
+            if use_keyframes and kf_idx < len(keyframe_names):
+                fraction = (total_seconds - remaining) / total_seconds
+                if fraction >= kf_targets[kf_idx] - 1e-9:
+                    anchor = keyframe_names[kf_idx]
+                    kf_idx += 1
+
             # Pick which model renders this block. The heavy 14B only opens the clip;
             # continuation blocks use the lighter 5B (and take over entirely if 14B OOMs).
-            if model == "wan21_1_3b":
+            if anchor:
+                kind, start_name = "wan22_ti2v_5b", anchor
+            elif model == "wan21_1_3b":
                 kind, start_name = "wan21_1_3b", ""
             elif index == 0 and not prev_frame_name:
                 kind = "wan22_14b" if (model == "wan22_14b" and not downgraded) else "wan22_ti2v_5b"

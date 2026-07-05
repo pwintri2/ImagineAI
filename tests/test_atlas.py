@@ -206,6 +206,157 @@ class AtlasTests(unittest.TestCase):
         self.assertEqual(payloads[0]["prompt_extend"], False)
         self.assertEqual(payloads[0]["seed"], 123)
 
+    def test_atlas_wan27_copyright_flag_retries_without_prompt_extend(self):
+        submits = []
+
+        def fake_request(path, key, payload=None, method="GET", timeout=120):
+            if path == "/model/generateVideo":
+                submits.append(dict(payload))
+                return {"data": {"id": f"vid-{len(submits)}"}}
+            if path == "/model/prediction/vid-1":
+                return {"data": {"status": "failed", "error": (
+                    "The request failed because the output video may be related to copyright restrictions"
+                )}}
+            if path == "/model/prediction/vid-2":
+                return {"data": {"status": "completed", "outputs": ["https://example.test/video.mp4"]}}
+            raise AssertionError(f"Unexpected path {path}")
+
+        with patch.object(server, "ATLAS_MODERATION_RETRIES", 2), \
+             patch.object(server, "atlas_request_json", side_effect=fake_request), \
+             patch.object(server, "download_url_to_output", return_value=("/api/local-media?name=atlas.mp4", Path("atlas.mp4"), "atlas.mp4")), \
+             patch.object(server, "transcode_mp4_path_to_webm", return_value=None):
+            result = server.atlas_generate_video("a rocket launch", "wide", 5, "", "secret")
+
+        self.assertEqual(result["url"], "/api/local-media?name=atlas.mp4")
+        self.assertEqual(len(submits), 2)
+        self.assertEqual(submits[0]["prompt_extend"], True)
+        self.assertEqual(submits[0]["seed"], -1)
+        self.assertEqual(submits[1]["prompt_extend"], False)
+        self.assertGreaterEqual(submits[1]["seed"], 0)
+        self.assertEqual(submits[1]["prompt"], "a rocket launch")
+
+    def test_atlas_video_non_moderation_failure_does_not_retry(self):
+        submits = []
+
+        def fake_request(path, key, payload=None, method="GET", timeout=120):
+            if path == "/model/generateVideo":
+                submits.append(dict(payload))
+                return {"data": {"id": "vid-1"}}
+            if path == "/model/prediction/vid-1":
+                return {"data": {"status": "failed", "error": "internal error"}}
+            raise AssertionError(f"Unexpected path {path}")
+
+        with patch.object(server, "atlas_request_json", side_effect=fake_request):
+            with self.assertRaisesRegex(RuntimeError, "internal error"):
+                server.atlas_generate_video("a rocket launch", "wide", 5, "", "secret")
+
+        self.assertEqual(len(submits), 1)
+
+    def test_atlas_wan27_copyright_flag_gives_clear_error_after_retries(self):
+        submits = []
+
+        def fake_request(path, key, payload=None, method="GET", timeout=120):
+            if path == "/model/generateVideo":
+                submits.append(dict(payload))
+                return {"data": {"id": f"vid-{len(submits)}"}}
+            if path.startswith("/model/prediction/vid-"):
+                return {"data": {"status": "failed", "error": (
+                    "The request failed because the output video may be related to copyright restrictions"
+                )}}
+            raise AssertionError(f"Unexpected path {path}")
+
+        with patch.object(server, "ATLAS_MODERATION_RETRIES", 2), \
+             patch.object(server, "atlas_request_json", side_effect=fake_request):
+            with self.assertRaisesRegex(RuntimeError, "content filter blocked this video"):
+                server.atlas_generate_video("a rocket launch", "wide", 5, "", "secret")
+
+        self.assertEqual(len(submits), 3)
+        self.assertEqual(submits[0]["prompt_extend"], True)
+        self.assertEqual([p["prompt_extend"] for p in submits[1:]], [False, False])
+
+    def test_atlas_input_prompt_moderation_does_not_retry(self):
+        submits = []
+
+        def fake_request(path, key, payload=None, method="GET", timeout=120):
+            if path == "/model/generateVideo":
+                submits.append(dict(payload))
+                return {"data": {"id": "vid-1"}}
+            if path == "/model/prediction/vid-1":
+                return {"data": {"status": "failed", "error": "Input data may contain inappropriate content."}}
+            raise AssertionError(f"Unexpected path {path}")
+
+        with patch.object(server, "ATLAS_MODERATION_RETRIES", 2), \
+             patch.object(server, "atlas_request_json", side_effect=fake_request):
+            with self.assertRaisesRegex(RuntimeError, "Input data may contain inappropriate content"):
+                server.atlas_generate_video("a rocket launch", "wide", 5, "", "secret")
+
+        self.assertEqual(len(submits), 1)
+
+    def test_atlas_poll_http_error_is_not_treated_as_moderation(self):
+        submits = []
+
+        def fake_request(path, key, payload=None, method="GET", timeout=120):
+            if path == "/model/generateVideo":
+                submits.append(dict(payload))
+                return {"data": {"id": "vid-1"}}
+            if path == "/model/prediction/vid-1":
+                raise server.AtlasHTTPError(500, "output moderation service unavailable")
+            raise AssertionError(f"Unexpected path {path}")
+
+        with patch.object(server, "ATLAS_MODERATION_RETRIES", 2), \
+             patch.object(server, "atlas_request_json", side_effect=fake_request):
+            with self.assertRaises(server.AtlasHTTPError):
+                server.atlas_generate_video("a rocket launch", "wide", 5, "", "secret")
+
+        self.assertEqual(len(submits), 1)
+
+    def test_atlas_non_wan27_model_fails_fast_on_moderation(self):
+        submits = []
+
+        def fake_request(path, key, payload=None, method="GET", timeout=120):
+            if path == "/model/generateVideo":
+                submits.append(dict(payload))
+                return {"data": {"id": "vid-1"}}
+            if path == "/model/prediction/vid-1":
+                return {"data": {"status": "failed", "error": (
+                    "The request failed because the output video may be related to copyright restrictions"
+                )}}
+            raise AssertionError(f"Unexpected path {path}")
+
+        with patch.object(server, "ATLAS_MODERATION_RETRIES", 2), \
+             patch.object(server, "atlas_request_json", side_effect=fake_request):
+            with self.assertRaisesRegex(RuntimeError, "content filter blocked this video"):
+                server.atlas_generate_video(
+                    "a rocket launch", "wide", 5, "kwaivgi/kling-v2.5-turbo-pro/text-to-video", "secret"
+                )
+
+        self.assertEqual(len(submits), 1)
+        self.assertNotIn("prompt_extend", submits[0])
+
+    def test_atlas_wan27_pinned_seed_survives_moderation_retry(self):
+        submits = []
+
+        def fake_request(path, key, payload=None, method="GET", timeout=120):
+            if path == "/model/generateVideo":
+                submits.append(dict(payload))
+                return {"data": {"id": f"vid-{len(submits)}"}}
+            if path.startswith("/model/prediction/vid-"):
+                return {"data": {"status": "failed", "error": (
+                    "The request failed because the output video may be related to copyright restrictions"
+                )}}
+            raise AssertionError(f"Unexpected path {path}")
+
+        with patch.object(server, "ATLAS_MODERATION_RETRIES", 2), \
+             patch.object(server, "DEFAULT_ATLAS_WAN27_SEED", "123"), \
+             patch.object(server, "atlas_request_json", side_effect=fake_request):
+            with self.assertRaisesRegex(RuntimeError, "content filter blocked this video"):
+                server.atlas_generate_video("a rocket launch", "wide", 5, "", "secret")
+
+        # A pinned seed leaves only the prompt_extend toggle to vary, so exactly one retry.
+        self.assertEqual(len(submits), 2)
+        self.assertEqual([p["seed"] for p in submits], [123, 123])
+        self.assertEqual([p["prompt_extend"] for p in submits], [True, False])
+
     def test_long_atlas_video_is_stitched_from_segments(self):
         calls = []
 
