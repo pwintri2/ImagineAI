@@ -1,7 +1,9 @@
+import io
 import os
 import sys
 import unittest
 import tempfile
+import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
@@ -356,6 +358,41 @@ class AtlasTests(unittest.TestCase):
         self.assertEqual(len(submits), 2)
         self.assertEqual([p["seed"] for p in submits], [123, 123])
         self.assertEqual([p["prompt_extend"] for p in submits], [True, False])
+
+    def test_atlas_upload_media_sends_browser_user_agent(self):
+        captured = {}
+
+        class FakeResponse:
+            def read(self):
+                # Real Atlas uploadMedia response shape: the URL lives in download_url.
+                return (b'{"code":200,"message":"success","data":{"type":"image",'
+                        b'"download_url":"https://upload.example.test/start.png",'
+                        b'"filename":"start.png","size":70}}')
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        def fake_urlopen(req, timeout=0):
+            captured["req"] = req
+            return FakeResponse()
+
+        with patch.object(server.urllib.request, "urlopen", side_effect=fake_urlopen):
+            url = server.atlas_upload_media("data:image/png;base64,aGVsbG8=", "secret", "start.png")
+
+        self.assertEqual(url, "https://upload.example.test/start.png")
+        # Cloudflare bans urllib's default UA with 403 "error code: 1010".
+        self.assertIn("Mozilla/5.0", captured["req"].get_header("User-agent") or "")
+
+    def test_atlas_upload_media_explains_cloudflare_block(self):
+        def fake_urlopen(req, timeout=0):
+            raise urllib.error.HTTPError(req.full_url, 403, "Forbidden", None, io.BytesIO(b"error code: 1010"))
+
+        with patch.object(server.urllib.request, "urlopen", side_effect=fake_urlopen):
+            with self.assertRaisesRegex(server.AtlasHTTPError, "Cloudflare"):
+                server.atlas_upload_media("data:image/png;base64,aGVsbG8=", "secret", "start.png")
 
     def test_long_atlas_video_is_stitched_from_segments(self):
         calls = []

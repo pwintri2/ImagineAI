@@ -61,6 +61,9 @@ DEFAULT_ATLAS_WAN27_AUDIO = os.environ.get("ATLAS_WAN27_AUDIO", "")
 DEFAULT_ATLAS_WAN27_PROMPT_EXTEND = os.environ.get("ATLAS_WAN27_PROMPT_EXTEND", "true").strip().lower() not in ("0", "false", "no", "off")
 DEFAULT_ATLAS_WAN27_SEED = os.environ.get("ATLAS_WAN27_SEED", "-1")
 ATLAS_BASE = os.environ.get("ATLAS_BASE_URL", os.environ.get("ATLASCLOUD_BASE_URL", "https://api.atlascloud.ai/api/v1")).rstrip("/")
+# Atlas sits behind Cloudflare, whose bot filter bans non-browser signatures
+# (403 "error code: 1010") — send a browser-like UA on every Atlas request.
+ATLAS_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 ImagineAI/1.0"
 DEFAULT_STABILITY_IMAGE_MODEL = os.environ.get("STABILITY_IMAGE_MODEL", "core")
 STABILITY_BASE = os.environ.get("STABILITY_BASE_URL", "https://api.stability.ai").rstrip("/")
 DEFAULT_MODELSLAB_IMAGE_MODEL = os.environ.get("MODELSLAB_IMAGE_MODEL", "sdxl")
@@ -1536,7 +1539,7 @@ def atlas_request_json(path: str, key: str, payload: dict[str, Any] | None = Non
     body = None if payload is None else json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(f"{ATLAS_BASE}{path}", data=body, method=method)
     req.add_header("Authorization", f"Bearer {key}")
-    req.add_header("User-Agent", "ImagineAI/1.0")
+    req.add_header("User-Agent", ATLAS_USER_AGENT)
     if payload is not None:
         req.add_header("Content-Type", "application/json")
     try:
@@ -1685,18 +1688,27 @@ def atlas_upload_media(data_url: object, key: str, original_name: object = "") -
     req = urllib.request.Request(f"{ATLAS_BASE}/model/uploadMedia", data=b"".join(chunks), method="POST")
     req.add_header("Authorization", f"Bearer {key}")
     req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+    req.add_header("User-Agent", ATLAS_USER_AGENT)
+    req.add_header("Accept", "application/json")
     try:
         with urllib.request.urlopen(req, timeout=240) as response:
             data = json.loads(response.read().decode("utf-8") or "{}")
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", "replace")
-        raise AtlasHTTPError(exc.code, detail[:500]) from exc
+        message = detail[:500]
+        if "error code: 10" in detail.lower() or "<html" in detail.lower():
+            message = (
+                f"Atlas' CDN (Cloudflare) blocked the image upload ({detail[:80].strip()}). "
+                "This is bot protection, not an API-key or credits problem. "
+                "Restart ImagineAI so the updated request headers take effect, then try again."
+            )
+        raise AtlasHTTPError(exc.code, message) from exc
     except urllib.error.URLError as exc:
         raise RuntimeError(f"Could not upload media to Atlas: {exc.reason}") from exc
     body = atlas_data(data)
-    url = str(body.get("url") or body.get("image_url") or body.get("media_url") or "").strip()
+    url = str(body.get("url") or body.get("download_url") or body.get("image_url") or body.get("media_url") or "").strip()
     if not url:
-        raise RuntimeError("Atlas media upload did not return a URL.")
+        raise RuntimeError(f"Atlas media upload did not return a URL (response: {json.dumps(data)[:300]}).")
     return url
 
 
