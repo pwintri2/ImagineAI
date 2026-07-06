@@ -15,7 +15,7 @@ text-to-video or image-to-video clips with Wan 2.1 / Wan 2.2, and optionally use
 
 cloud providers when your GPU is busy: Google Gemini for images, and Atlas Cloud,
 Seedance2.ai, or xAI Grok Imagine for images and videos.
-=======
+
 cloud providers when your GPU is busy: Google Gemini for images, and Atlas Cloud
 or xAI Grok Imagine for images and videos.
 
