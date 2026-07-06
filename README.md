@@ -11,13 +11,8 @@ ComfyUI install, and keeps settings, keys, and generated media on your machine.
 
 The current app can generate and edit still images with Z-Image Turbo, make
 text-to-video or image-to-video clips with Wan 2.1 / Wan 2.2, and optionally use
-<<<<<<< HEAD
 cloud providers when your GPU is busy: Google Gemini for images, and Atlas Cloud,
 Seedance2.ai, or xAI Grok Imagine for images and videos.
-=======
-cloud providers when your GPU is busy: Google Gemini for images, and Atlas Cloud
-or xAI Grok Imagine for images and videos.
->>>>>>> origin/main
 
 ## Highlights
 
@@ -38,17 +33,12 @@ or xAI Grok Imagine for images and videos.
   `modelslab`, `stable-diffusion-api`, or `wan2.6-t2v` key.
 - Optional Stability image generation with a locally stored `stability` or
   `stability-ai` key.
-<<<<<<< HEAD
 - Grok, Atlas, Stable Diffusion, and ModelsLab video durations up to 30 seconds
   in the UI; longer cloud videos are generated as multiple provider segments
   and stitched locally.
-=======
-- Grok, Atlas, and ModelsLab video durations up to 30 seconds in the UI; longer
-  cloud videos are generated as multiple provider segments and stitched locally.
 - Local cloud-video stitching uses ComfyUI's PyAV environment when available,
   then falls back to `ffmpeg` from `PATH`, `IMAGINEAI_FFMPEG`, or the bundled
   `ffmpeg-static` npm dependency.
->>>>>>> origin/main
 - Browser UI plus Tauri desktop packaging.
 - Local history, background jobs, media proxying, and ComfyUI model detection.
 - No third-party Python packages required for the server.
@@ -131,14 +121,10 @@ The Video tab accepts an optional start image. Start images are wired for:
 - xAI Grok Imagine image-to-video.
 - Atlas Cloud image-to-video.
 
-<<<<<<< HEAD
 Seedance and Stable Diffusion / ModelsLab video remain text-to-video only in
 this app. The public Seedance2.ai API accepts image-to-video inputs as public
 image URLs; ImagineAI does not currently upload local start images to a public
 URL for Seedance.
-=======
-ModelsLab video remains text-to-video only in this app.
->>>>>>> origin/main
 
 ## Settings And Keys
 
@@ -164,12 +150,9 @@ You can provide the Atlas key with `ATLAS_API_KEY` or `ATLASCLOUD_API_KEY`, or
 save it in Settings as `atlas`, `atlascloud`, or `atlas-cloud`. Atlas
 environment variables take precedence over saved keys, which is useful when
 switching from an Atlas Coding Plan token to a full Atlas Cloud API key.
-<<<<<<< HEAD
 You can provide the Seedance2.ai key with `SEEDANCE_API_KEY` or
 `SEEDANCE2_API_KEY`, or save it in Settings as `seedance`, `seedance2`, or
 `seedance2-ai`.
-=======
->>>>>>> origin/main
 You can provide the ModelsLab key with `MODELSLAB_API_KEY`, or save it in
 Settings as `sdxl`, `modelslab`, `stable-diffusion-api`, `free-api`,
 `vrije-api`, or `wan2.6-t2v`.
@@ -187,13 +170,10 @@ access errors because there is no equivalent text-to-video fallback in the app.
 Atlas Coding Plan tokens can list video models, but Atlas returns 403 for video
 generation with those tokens. Use a full Atlas Cloud API key/plan for Atlas
 video, or use ModelsLab, xAI, or local Wan for video.
-<<<<<<< HEAD
 Seedance2.ai documents a video API. In the Image tab, ImagineAI uses that same
 official endpoint with `return_last_frame` enabled and saves the returned last
 frame as a still image. This consumes Seedance video credits and creates a short
 provider video task behind the scenes.
-=======
->>>>>>> origin/main
 
 ## Environment
 
