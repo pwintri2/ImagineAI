@@ -54,10 +54,7 @@ export function render() {
   const xaiOk = engineAvailable('xai');
   const atlasOk = engineAvailable('atlas');
   const sdxlOk = engineAvailable('sdxl');
-<<<<<<< HEAD
   const seedanceOk = engineAvailable('seedance');
-=======
->>>>>>> origin/main
   const selectedImage = s._draftImageSourceImage;
   const imageError = s._draftImageSourceImageError || '';
 
@@ -153,7 +150,13 @@ export function render() {
 function engineHint(s) {
   if (s.imageEngine === 'gemini') return `Cloud render via ${escapeHtml(s.config.geminiModel || 'Gemini')} · uses your Google API quota`;
   if (s.imageEngine === 'xai') return `Cloud render via ${escapeHtml(s.config.xaiImageModel || 'Grok Imagine')} · uses your xAI quota`;
-  if (s.imageEngine === 'atlas') return `Cloud render via ${escapeHtml(s.config.atlasImageModel || 'seedream-3.0')} · uses your Atlas quota`;
+  if (s.imageEngine === 'atlas') {
+    // With a reference image attached, the job runs the Atlas edit model instead.
+    const model = s._draftImageSourceImage
+      ? (s.config.atlasImageEditModel || 'bytedance/seedream-v4.5/edit')
+      : (s.config.atlasImageModel || 'seedream-3.0');
+    return `Cloud render via ${escapeHtml(model)} · uses your Atlas quota`;
+  }
   if (s.imageEngine === 'sdxl') return `Cloud render via ${escapeHtml(s.config.modelslabImageModel || 'sdxl')} · uses your ModelsLab quota`;
   if (s.imageEngine === 'seedance') return `Seedance still via ${escapeHtml(s.config.seedanceVideoModel || 'seedance-2-0')} return_last_frame · uses Seedance video credits`;
   if (!s.config.comfyReachable) return 'ComfyUI not detected — start it, or switch to a cloud engine in Settings.';
@@ -230,7 +233,7 @@ function readFileAsDataURL(file) {
 }
 
 function sourceImageLabel(image) {
-  if (!image) return 'Optional. Edit or restyle an uploaded image with Z-Image, Gemini, or Grok Imagine.';
+  if (!image) return 'Optional. Edit or restyle an uploaded image with Z-Image, Gemini, Grok Imagine, or Atlas.';
   return `Selected: ${image.name} · ${formatBytes(image.size)}`;
 }
 
