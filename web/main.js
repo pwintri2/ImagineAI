@@ -179,8 +179,8 @@ async function handleGenerateImage() {
   if (engine === 'seedance' && !s.config.seedanceConfigured) { showToast('No Seedance key saved — open Settings to add one as seedance.', 'error'); return; }
   if (engine === 'sdxl' && !(s.config.sdxlConfigured || s.config.stabilityConfigured)) { showToast('No ModelsLab/SDXL key saved — open Settings to add one.', 'error'); return; }
   const sourceImage = PromptView.getSourceImage();
-  if (sourceImage && !['local', 'gemini', 'xai'].includes(engine)) {
-    showToast('Reference images work with Z-Image, Gemini, or Grok Imagine. Select one of those first.', 'info');
+  if (sourceImage && !['local', 'gemini', 'xai', 'atlas'].includes(engine)) {
+    showToast('Reference images work with Z-Image, Gemini, Grok Imagine, or Atlas. Select one of those first.', 'info');
     return;
   }
 
@@ -188,14 +188,14 @@ async function handleGenerateImage() {
   PromptView.setGenerating(true);
   const count = s.imageCount;
   const loadingLabel = sourceImage
-    ? (engine === 'gemini' ? 'Asking Gemini to edit…' : (engine === 'xai' ? 'Asking Grok Imagine to edit…' : 'Editing on your GPU…'))
+    ? (engine === 'gemini' ? 'Asking Gemini to edit…' : (engine === 'xai' ? 'Asking Grok Imagine to edit…' : (engine === 'atlas' ? 'Asking Atlas to edit…' : 'Editing on your GPU…')))
     : (engine === 'gemini' ? 'Asking Gemini…' : (engine === 'xai' ? 'Asking Grok Imagine…' : (engine === 'atlas' ? 'Asking Atlas…' : (engine === 'seedance' ? 'Asking Seedance…' : (engine === 'sdxl' ? 'Asking ModelsLab…' : 'Rendering on your GPU…')))));
   GalleryView.renderLoading(count, { label: loadingLabel });
   const started = Date.now();
 
   try {
     const progressBase = sourceImage
-      ? (engine === 'gemini' ? 'Gemini is editing' : (engine === 'xai' ? 'Grok Imagine is editing' : 'Z-Image editing'))
+      ? (engine === 'gemini' ? 'Gemini is editing' : (engine === 'xai' ? 'Grok Imagine is editing' : (engine === 'atlas' ? 'Atlas is editing' : 'Z-Image editing')))
       : (engine === 'gemini' ? 'Gemini is painting' : (engine === 'xai' ? 'Grok Imagine is painting' : (engine === 'atlas' ? 'Atlas is painting' : (engine === 'seedance' ? 'Seedance is rendering a still' : (engine === 'sdxl' ? 'ModelsLab is painting' : 'Z-Image rendering')))));
     const { results, modelTitle } = await generateImage(
       { prompt, engine, aspect: s.aspectRatio, count, steps: s.steps, sourceImage },

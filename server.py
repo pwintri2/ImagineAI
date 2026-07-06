@@ -48,6 +48,9 @@ DEFAULT_XAI_IMAGE_MODEL = os.environ.get("XAI_IMAGE_MODEL", "grok-imagine-image-
 DEFAULT_XAI_VIDEO_MODEL = os.environ.get("XAI_VIDEO_MODEL", "grok-imagine-video")
 XAI_BASE = os.environ.get("XAI_BASE_URL", "https://api.x.ai/v1").rstrip("/")
 DEFAULT_ATLAS_IMAGE_MODEL = os.environ.get("ATLAS_IMAGE_MODEL", os.environ.get("ATLASCLOUD_IMAGE_MODEL", "seedream-3.0"))
+# Used when the user supplies a reference image; must be an Atlas IMAGE-TO-IMAGE
+# model (they take an "images" array, unlike the text-to-image ids).
+DEFAULT_ATLAS_IMAGE_EDIT_MODEL = os.environ.get("ATLAS_IMAGE_EDIT_MODEL", "bytedance/seedream-v4.5/edit")
 DEFAULT_ATLAS_VIDEO_MODEL = os.environ.get(
     "ATLAS_VIDEO_MODEL",
     os.environ.get("ATLASCLOUD_VIDEO_MODEL", "alibaba/wan-2.7/text-to-video"),
@@ -216,6 +219,14 @@ ASPECT_TO_STABILITY = {
     "wide": "16:9",
     "tall": "9:16",
 }
+# Atlas edit models only accept preset "WIDTH*HEIGHT" sizes (2K/4K tiers).
+ASPECT_TO_ATLAS_EDIT_SIZE = {
+    "square": "2048*2048",
+    "landscape": "2304*1728",
+    "portrait": "1728*2304",
+    "wide": "2848*1600",
+    "tall": "1600*2848",
+}
 ASPECT_TO_MODELSLAB_IMAGE_SIZE = {
     "square": (768, 768),
     "landscape": (1024, 768),
@@ -277,6 +288,7 @@ def load_settings() -> dict[str, Any]:
         "xaiImageModel": DEFAULT_XAI_IMAGE_MODEL,
         "xaiVideoModel": DEFAULT_XAI_VIDEO_MODEL,
         "atlasImageModel": DEFAULT_ATLAS_IMAGE_MODEL,
+        "atlasImageEditModel": DEFAULT_ATLAS_IMAGE_EDIT_MODEL,
         "atlasVideoModel": DEFAULT_ATLAS_VIDEO_MODEL,
         "stabilityImageModel": DEFAULT_STABILITY_IMAGE_MODEL,
         "modelslabImageModel": DEFAULT_MODELSLAB_IMAGE_MODEL,
@@ -319,7 +331,8 @@ def valid_http_url(url: str) -> bool:
 
 def save_settings(patch: dict[str, Any]) -> dict[str, Any]:
     current = load_settings()
-    for key in ("comfyUrl", "geminiModel", "xaiImageModel", "xaiVideoModel", "atlasImageModel", "atlasVideoModel", "stabilityImageModel",
+    for key in ("comfyUrl", "geminiModel", "xaiImageModel", "xaiVideoModel", "atlasImageModel", "atlasImageEditModel",
+                "atlasVideoModel", "stabilityImageModel",
                 "modelslabImageModel", "modelslabVideoModel", "seedanceVideoModel", "defaultImageEngine"):
         if key in patch and isinstance(patch[key], str) and patch[key].strip():
             value = patch[key].strip()
@@ -1635,15 +1648,37 @@ def atlas_poll_result(request_id: str, key: str, on_progress=None,
     raise TimeoutError("Atlas generation timed out.")
 
 
-def atlas_generate_image(prompt: str, aspect: str, count: int, model: str, key: str, on_progress=None) -> list[str]:
+def atlas_image_edit_model(configured: str, settings: dict[str, Any] | None = None) -> str:
+    """Model to use when the user supplies a reference image: the configured
+    image model if it is already an edit model, else the edit default."""
+    raw = (configured or "").strip()
+    if "edit" in raw.lower():
+        return raw
+    override = str((settings or {}).get("atlasImageEditModel") or "").strip()
+    return override or DEFAULT_ATLAS_IMAGE_EDIT_MODEL
+
+
+def atlas_generate_image(prompt: str, aspect: str, count: int, model: str, key: str, on_progress=None,
+                         source_image: object = "", source_image_name: object = "") -> list[str]:
     requested = clamp_int(count, 1, 1, 4)
     model_id = model or DEFAULT_ATLAS_IMAGE_MODEL
+    has_source_image = isinstance(source_image, str) and bool(source_image.strip())
+    image_url = ""
+    if has_source_image:
+        if on_progress:
+            on_progress("uploading image")
+        image_url = atlas_upload_media(source_image, key, source_image_name)
     urls: list[str] = []
     for index in range(requested):
         payload = {
             "model": model_id,
             "prompt": prompt,
         }
+        if has_source_image:
+            payload["images"] = [image_url]
+            size = ASPECT_TO_ATLAS_EDIT_SIZE.get(aspect)
+            if size:
+                payload["size"] = size
         if requested > 1 and on_progress:
             on_progress(f"submitting {index + 1}/{requested}")
         started = atlas_request_json("/model/generateImage", key, payload, method="POST", timeout=120)
@@ -2454,9 +2489,9 @@ def run_image_job(job_id: str, payload: dict[str, Any]) -> None:
             return
 
         if engine in ("atlas", "atlascloud", "atlas-cloud"):
-            if isinstance(source_image, str) and source_image.strip():
-                raise RuntimeError("Atlas image reference uploads are not wired for this image engine yet. Use Z-Image, Gemini, or Grok Imagine for image edits.")
             model = str(payload.get("atlasImageModel") or settings.get("atlasImageModel") or DEFAULT_ATLAS_IMAGE_MODEL)
+            if isinstance(source_image, str) and source_image.strip():
+                model = atlas_image_edit_model(model, settings)
             key, provider = atlas_key()
             update_job(job_id, status="running", meta={"engine": "atlas", "modelTitle": model, "provider": provider})
             if not key:
@@ -2467,7 +2502,8 @@ def run_image_job(job_id: str, payload: dict[str, Any]) -> None:
                            meta={"engine": "atlas", "modelTitle": model, "atlasStatus": status,
                                  "provider": provider})
 
-            urls = atlas_generate_image(prompt, aspect, count, model, key, on_progress=on_atlas_progress)
+            urls = atlas_generate_image(prompt, aspect, count, model, key, on_progress=on_atlas_progress,
+                                        source_image=source_image, source_image_name=source_image_name)
             update_job(job_id, status="done",
                        results=[{"url": u, "type": "image"} for u in urls],
                        meta={"engine": "atlas", "modelTitle": f"Atlas {model}",
@@ -3390,6 +3426,7 @@ class Handler(BaseHTTPRequestHandler):
             "atlasConfigured": bool(atlas_value),
             "atlasProvider": atlas_provider if atlas_value else "",
             "atlasImageModel": settings["atlasImageModel"],
+            "atlasImageEditModel": settings["atlasImageEditModel"],
             "atlasVideoModel": settings["atlasVideoModel"],
             "sdxlConfigured": bool(stability_value or modelslab_value),
             "stabilityConfigured": bool(stability_value),
