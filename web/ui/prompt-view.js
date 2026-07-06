@@ -54,7 +54,10 @@ export function render() {
   const xaiOk = engineAvailable('xai');
   const atlasOk = engineAvailable('atlas');
   const sdxlOk = engineAvailable('sdxl');
+<<<<<<< HEAD
   const seedanceOk = engineAvailable('seedance');
+=======
+>>>>>>> origin/main
   const selectedImage = s._draftImageSourceImage;
   const imageError = s._draftImageSourceImageError || '';
 

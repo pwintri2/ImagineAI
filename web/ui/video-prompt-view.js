@@ -33,9 +33,13 @@ function chip(label, value, group, active, disabled = false) {
 const LOCAL_WAN_MODELS = ['wanvideo_5b', 'wan22_14b', 'wan22_ti2v_5b', 'wan21_1_3b'];
 
 function maxSecondsForModel(model) {
+<<<<<<< HEAD
   if (['xai', 'atlas', 'seedance'].includes(model)) return 30;
   if (MODELSLAB_VIDEO_MODELS.includes(model)) return 120;   // cloud, stitched — no local VRAM used
   if (LOCAL_WAN_MODELS.includes(model)) return 120;   // rendered in ~10s blocks, stitched together
+=======
+  if (['xai', 'atlas', 'sdxl'].includes(model)) return 30;
+>>>>>>> origin/main
   return 5;
 }
 
@@ -232,6 +236,7 @@ function rememberDraft() {
 const MAX_START_IMAGES = 8;
 const START_IMAGE_MODELS = ['wan22_ti2v_5b', 'wan22_14b', 'xai', 'atlas'];
 
+<<<<<<< HEAD
 async function handleStartImageChange() {
   const files = Array.from(startImageInput?.files || []);
   const s = getState();
@@ -252,6 +257,20 @@ async function handleStartImageChange() {
     if (modelAvailable('wan22_ti2v_5b')) setState({ videoModel: 'wan22_ti2v_5b' });
     else if (modelAvailable('xai')) setState({ videoModel: 'xai' });
     else if (modelAvailable('atlas')) setState({ videoModel: 'atlas' });
+=======
+  s._draftVideoStartImage = {
+    dataUrl: await readFileAsDataURL(file),
+    name: file.name,
+    size: file.size,
+  };
+  s._draftVideoStartImageError = '';
+  if (!['wan22_ti2v_5b', 'xai', 'atlas'].includes(s.videoModel) && modelAvailable('wan22_ti2v_5b')) {
+    setState({ videoModel: 'wan22_ti2v_5b' });
+  } else if (!['wan22_ti2v_5b', 'xai', 'atlas'].includes(s.videoModel) && modelAvailable('xai')) {
+    setState({ videoModel: 'xai' });
+  } else if (!['wan22_ti2v_5b', 'xai', 'atlas'].includes(s.videoModel) && modelAvailable('atlas')) {
+    setState({ videoModel: 'atlas' });
+>>>>>>> origin/main
   }
   render();
 }
@@ -265,12 +284,18 @@ function readFileAsDataURL(file) {
   });
 }
 
+<<<<<<< HEAD
 function startImagesLabel(images) {
   if (!images.length) {
     return 'Optional. Add one or more images. Grok mixes multiple images into one clip; local Wan 2.2 TI2V/14B travels through them as keyframes; Atlas uses the first only.';
   }
   if (images.length === 1) return `1 start frame · ${formatBytes(images[0].size)}`;
   return `${images.length} images · Grok blends them; local Wan uses them as keyframes in order.`;
+=======
+function startImageLabel(image) {
+  if (!image) return 'Optional. Add one to animate a still image with Wan 2.2 TI2V 5B, Grok Imagine, or Atlas.';
+  return `Selected: ${image.name} · ${formatBytes(image.size)}`;
+>>>>>>> origin/main
 }
 
 function formatBytes(bytes) {

@@ -22,6 +22,7 @@ import json
 import os
 import random
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -79,6 +80,7 @@ SEEDANCE_BASE = os.environ.get("SEEDANCE_BASE_URL", os.environ.get("SEEDANCE2_BA
 # inline. Best-effort: if unavailable we fall back to serving the mp4.
 COMFY_PYTHON = os.environ.get("COMFY_PYTHON", "/home/pwintri2/ComfyUI/.venv/bin/python")
 COMFY_INPUT_DIR = Path(os.environ.get("COMFYUI_INPUT_DIR", "/home/pwintri2/ComfyUI/input"))
+FFMPEG_ENV_KEYS = ("IMAGINEAI_FFMPEG", "FFMPEG_BINARY", "FFMPEG")
 
 COMFY_IMAGE_TIMEOUT = float(os.environ.get("IMAGINEAI_IMAGE_TIMEOUT", "600"))
 COMFY_VIDEO_TIMEOUT = float(os.environ.get("IMAGINEAI_VIDEO_TIMEOUT", "3600"))
@@ -86,10 +88,14 @@ COMFY_MISSING_HISTORY_GRACE = float(os.environ.get("IMAGINEAI_MISSING_HISTORY_GR
 XAI_VIDEO_TIMEOUT = float(os.environ.get("IMAGINEAI_XAI_VIDEO_TIMEOUT", "1200"))
 XAI_MAX_SECONDS_PER_REQUEST = 15
 XAI_MAX_STITCHED_SECONDS = 30
+<<<<<<< HEAD
 MODELSLAB_MAX_STITCHED_SECONDS = 120  # cloud (no local VRAM); stitched from ~5s ModelsLab segments
 SEEDANCE_MAX_SECONDS_PER_REQUEST = 15
 SEEDANCE_MAX_STITCHED_SECONDS = 30
 SEEDANCE_STILL_SECONDS = 4
+=======
+MODELSLAB_MAX_STITCHED_SECONDS = 30
+>>>>>>> origin/main
 ATLAS_MAX_SECONDS_PER_REQUEST = 10
 ATLAS_WAN27_MAX_SECONDS_PER_REQUEST = 15
 ATLAS_MAX_STITCHED_SECONDS = 30
@@ -1255,6 +1261,22 @@ def segment_prompt(prompt: str, index: int, total: int) -> str:
     )
 
 
+def segmented_video_result(clips: list[dict[str, Any]], public_result, warning: str,
+                           extra: dict[str, Any] | None = None) -> dict[str, Any]:
+    segments = [public_result(clip) for clip in clips]
+    first = next((segment for segment in segments if segment.get("url") or segment.get("mp4Url")), None)
+    if not first:
+        raise RuntimeError(warning)
+    result = dict(first)
+    result["type"] = "video"
+    result["segments"] = segments
+    result["stitchStatus"] = "segments"
+    result["stitchWarning"] = warning
+    if extra:
+        result.update(extra)
+    return result
+
+
 def xai_generate_video(prompt: str, aspect: str, seconds: object, model: str, key: str,
                        start_image: object = "", on_progress=None) -> dict[str, Any]:
     images = xai_images_list(start_image)
@@ -1295,7 +1317,11 @@ def xai_generate_video(prompt: str, aspect: str, seconds: object, model: str, ke
     paths = [Path(str(clip.get("mp4Path") or "")) for clip in clips if clip.get("mp4Path")]
     combined_url = concat_mp4_paths_to_webm(paths)
     if not combined_url:
-        raise RuntimeError("Grok generated the video segments, but ImagineAI could not stitch them into one file.")
+        return segmented_video_result(
+            clips,
+            xai_public_video_result,
+            "Grok generated the video segments, but local stitching is unavailable. Showing the segments instead.",
+        )
     return {
         "url": combined_url,
         "type": "video",
@@ -1539,7 +1565,11 @@ def atlas_request_json(path: str, key: str, payload: dict[str, Any] | None = Non
     body = None if payload is None else json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(f"{ATLAS_BASE}{path}", data=body, method=method)
     req.add_header("Authorization", f"Bearer {key}")
+<<<<<<< HEAD
     req.add_header("User-Agent", ATLAS_USER_AGENT)
+=======
+    req.add_header("User-Agent", "ImagineAI/1.0")
+>>>>>>> origin/main
     if payload is not None:
         req.add_header("Content-Type", "application/json")
     try:
@@ -1762,6 +1792,7 @@ def atlas_public_video_result(result: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in result.items() if k != "mp4Path"}
 
 
+<<<<<<< HEAD
 def atlas_error_is_output_moderation(error: object) -> bool:
     """True when the provider's content filter rejected the *generated* video
     (copyright/IP/sensitive-content). Input-side prompt rejections don't count:
@@ -1783,6 +1814,8 @@ def atlas_error_is_output_moderation(error: object) -> bool:
     return "output" in text or "generated" in text
 
 
+=======
+>>>>>>> origin/main
 def atlas_video_segment_lengths(seconds: object, model_id: str = "") -> list[int]:
     if atlas_is_wan27_model(model_id):
         remaining = clamp_int(seconds, 5, 2, ATLAS_MAX_STITCHED_SECONDS)
@@ -1835,6 +1868,7 @@ def atlas_generate_video_clip(prompt: str, aspect: str, seconds: object, model: 
         if on_progress:
             on_progress("uploading image")
         payload["image"] = atlas_upload_media(start_image, key, start_image_name)
+<<<<<<< HEAD
     # Only Wan 2.7 gets moderation retries: its payload carries the knobs
     # (prompt_extend, seed) that give a resubmission a real chance of passing.
     retries = ATLAS_MODERATION_RETRIES if atlas_is_wan27_model(model_id) else 0
@@ -1891,6 +1925,33 @@ def atlas_generate_video_clip(prompt: str, aspect: str, seconds: object, model: 
                 ) from exc
             if on_progress:
                 on_progress(f"content filter flagged the output; retrying ({attempt}/{attempts - 1})")
+=======
+    try:
+        started = atlas_request_json("/model/generateVideo", key, payload, method="POST", timeout=120)
+    except AtlasHTTPError as exc:
+        if exc.code == 403:
+            reason = str(exc.message or "").strip()
+            if "coding plan" in reason.lower() and "not support" in reason.lower():
+                detail = (
+                    f"Atlas returned 403 for {model_id}: this Atlas Coding Plan token does not support video generation. "
+                    "There is no Atlas video model this token can use here; add a full Atlas Cloud API key/plan, "
+                    "or use ModelsLab, xAI, or local Wan for video."
+                )
+            else:
+                detail = (
+                    f"Atlas rejected video generation with 403 for model {model_id}. "
+                    "Check Atlas credits/model access, or try another Atlas video model in Settings."
+                )
+            if reason:
+                detail = f"{detail} Atlas said: {reason}"
+            raise AtlasModelAccessError(
+                model_id,
+                detail,
+            ) from exc
+        raise
+    request_id = atlas_prediction_id(started)
+    result = atlas_poll_result(request_id, key, on_progress=on_progress, timeout=ATLAS_VIDEO_TIMEOUT, interval=5)
+>>>>>>> origin/main
     outputs = atlas_extract_outputs(result)
     remote_url = next((url for url in outputs if url.startswith(("http://", "https://"))), "")
     if not remote_url:
@@ -1928,12 +1989,27 @@ def atlas_generate_video_with_model(prompt: str, aspect: str, seconds: object, m
 
     paths = [Path(str(clip.get("mp4Path") or "")) for clip in clips if clip.get("mp4Path")]
     combined_url = concat_mp4_paths_to_webm(paths)
+<<<<<<< HEAD
     if not combined_url:
         raise RuntimeError("Atlas generated the video segments, but ImagineAI could not stitch them into one file.")
     return {
         "url": combined_url,
         "type": "video",
         "model": clips[0].get("model") or model_id,
+=======
+    actual_model = clips[0].get("model") or model_id
+    if not combined_url:
+        return segmented_video_result(
+            clips,
+            atlas_public_video_result,
+            "Atlas generated the video segments, but local stitching is unavailable. Showing the segments instead.",
+            {"model": actual_model},
+        )
+    return {
+        "url": combined_url,
+        "type": "video",
+        "model": actual_model,
+>>>>>>> origin/main
         "segments": [atlas_public_video_result(clip) for clip in clips],
     }
 
@@ -2338,7 +2414,11 @@ def modelslab_generate_video(prompt: str, aspect: str, seconds: object, model: s
     paths = [Path(str(clip.get("mp4Path") or "")) for clip in clips if clip.get("mp4Path")]
     combined_url = concat_mp4_paths_to_webm(paths)
     if not combined_url:
-        raise RuntimeError("ModelsLab generated the video segments, but ImagineAI could not stitch them into one file.")
+        return segmented_video_result(
+            clips,
+            modelslab_public_video_result,
+            "ModelsLab generated the video segments, but local stitching is unavailable. Showing the segments instead.",
+        )
     return {
         "url": combined_url,
         "type": "video",
@@ -2799,25 +2879,112 @@ def transcode_mp4_path_to_webm(src_path: Path) -> str | None:
         return None
 
 
-def concat_mp4_paths_to_webm(src_paths: list[Path]) -> str | None:
-    """Stitch local mp4 clips into one VP9 webm via ComfyUI's PyAV environment."""
-    paths = [p for p in src_paths if p.exists() and p.is_file()]
-    if len(paths) < 2 or not Path(COMFY_PYTHON).exists():
-        return None
-    name = f"video_{int(now())}_{uuid.uuid4().hex[:8]}.webm"
-    out_path = OUTPUTS_DIR / name
+def ffmpeg_executable() -> str | None:
+    candidates: list[str] = []
+    for key in FFMPEG_ENV_KEYS:
+        value = os.environ.get(key, "").strip()
+        if value:
+            candidates.append(value)
+
+    from_path = shutil.which("ffmpeg")
+    if from_path:
+        candidates.append(from_path)
+
+    bundled_name = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+    candidates.extend([
+        str(APP_DIR / "node_modules" / "ffmpeg-static" / bundled_name),
+        "/opt/homebrew/bin/ffmpeg",
+        "/usr/local/bin/ffmpeg",
+        "/usr/bin/ffmpeg",
+    ])
+
+    for candidate in candidates:
+        path = Path(candidate).expanduser()
+        if path.is_file() and os.access(path, os.X_OK):
+            return str(path)
+    return None
+
+
+def ffmpeg_video_size(ffmpeg: str, src_path: Path) -> tuple[int, int] | None:
     try:
         result = subprocess.run(
-            [COMFY_PYTHON, "-c", _CONCAT_WEBM_SRC, str(out_path), *[str(p) for p in paths]],
-            capture_output=True, timeout=900,
+            [ffmpeg, "-hide_banner", "-i", str(src_path)],
+            capture_output=True, text=True, timeout=30,
+        )
+    except Exception:
+        return None
+    output = f"{result.stdout}\n{result.stderr}"
+    for width, height in re.findall(r"(?<![A-Za-z0-9])(\d{2,5})x(\d{2,5})(?![A-Za-z0-9])", output):
+        w = int(width)
+        h = int(height)
+        if w > 0 and h > 0:
+            return max(2, w - (w % 2)), max(2, h - (h % 2))
+    return None
+
+
+def concat_mp4_paths_with_ffmpeg(src_paths: list[Path], ext: str,
+                                 codec_args: list[str], timeout: float = 900) -> str | None:
+    paths = [p for p in src_paths if p.exists() and p.is_file()]
+    ffmpeg = ffmpeg_executable()
+    if len(paths) < 2 or not ffmpeg:
+        return None
+
+    ensure_dirs()
+    safe_ext = ext if ext.startswith(".") else f".{ext}"
+    name = f"video_{int(now())}_{uuid.uuid4().hex[:8]}{safe_ext}"
+    out_path = OUTPUTS_DIR / name
+    first_size = ffmpeg_video_size(ffmpeg, paths[0])
+    filters: list[str] = []
+    labels: list[str] = []
+    for index, _ in enumerate(paths):
+        label = f"v{index}"
+        labels.append(f"[{label}]")
+        chain = "setsar=1,fps=30,format=yuv420p"
+        if first_size:
+            width, height = first_size
+            chain = (
+                f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,{chain}"
+            )
+        filters.append(f"[{index}:v:0]{chain}[{label}]")
+    filter_complex = ";".join(filters + [f"{''.join(labels)}concat=n={len(paths)}:v=1:a=0[v]"])
+    input_args = [arg for path in paths for arg in ("-i", str(path))]
+    try:
+        result = subprocess.run(
+            [
+                ffmpeg,
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                *input_args,
+                "-filter_complex",
+                filter_complex,
+                "-map",
+                "[v]",
+                "-an",
+                *codec_args,
+                str(out_path),
+            ],
+            capture_output=True,
+            timeout=timeout,
         )
         if result.returncode != 0 or not out_path.exists() or out_path.stat().st_size == 0:
+            try:
+                out_path.unlink(missing_ok=True)
+            except Exception:
+                pass
             return None
         return output_url(name)
     except Exception:
+        try:
+            out_path.unlink(missing_ok=True)
+        except Exception:
+            pass
         return None
 
 
+<<<<<<< HEAD
 # Save the final frame of a clip as a PNG so it can seed the next block (i2v).
 _LAST_FRAME_SRC = r"""
 import sys, av
@@ -3197,6 +3364,42 @@ def render_local_stitched_video(job_id: str, payload: dict[str, Any], model: str
                 (COMFY_INPUT_DIR / name).unlink(missing_ok=True)
             except OSError:
                 pass
+=======
+def concat_mp4_paths_to_webm(src_paths: list[Path]) -> str | None:
+    """Stitch local mp4 clips into one playable video.
+
+    Prefer ComfyUI's PyAV environment for VP9 webm. On machines without that
+    environment, use ffmpeg from PATH, a configured env var, or ffmpeg-static.
+    """
+    paths = [p for p in src_paths if p.exists() and p.is_file()]
+    if len(paths) < 2:
+        return None
+    if Path(COMFY_PYTHON).exists():
+        name = f"video_{int(now())}_{uuid.uuid4().hex[:8]}.webm"
+        out_path = OUTPUTS_DIR / name
+        try:
+            result = subprocess.run(
+                [COMFY_PYTHON, "-c", _CONCAT_WEBM_SRC, str(out_path), *[str(p) for p in paths]],
+                capture_output=True, timeout=900,
+            )
+            if result.returncode == 0 and out_path.exists() and out_path.stat().st_size > 0:
+                return output_url(name)
+        except Exception:
+            pass
+
+    webm_url = concat_mp4_paths_with_ffmpeg(
+        paths,
+        ".webm",
+        ["-c:v", "libvpx-vp9", "-crf", "34", "-b:v", "0", "-deadline", "realtime", "-cpu-used", "8", "-row-mt", "1"],
+    )
+    if webm_url:
+        return webm_url
+    return concat_mp4_paths_with_ffmpeg(
+        paths,
+        ".mp4",
+        ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", "-movflags", "+faststart"],
+    )
+>>>>>>> origin/main
 
 
 def transcode_entry_to_webm(entry: dict[str, Any]) -> str | None:

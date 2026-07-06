@@ -20,6 +20,7 @@ export const VIDEO_MODELS = {
   atlas: {
     id: 'atlas', title: 'Atlas Video', subtitle: 'Cloud · Atlas Cloud',
     note: 'Wan 2.7 through Atlas Cloud · up to 30s stitched locally', defaultSeconds: 5,
+<<<<<<< HEAD
   },
   seedance: {
     id: 'seedance', title: 'Seedance 2.0', subtitle: 'Cloud · Seedance2',
@@ -28,6 +29,8 @@ export const VIDEO_MODELS = {
   wanvideo_5b: {
     id: 'wanvideo_5b', title: 'WanVideo Long', subtitle: 'Consistent long clips',
     note: 'WanVideoWrapper · block-swap + context windows · one coherent pass up to 120s · slow but no drift', defaultSeconds: 5,
+=======
+>>>>>>> origin/main
   },
   wan22_14b: {
     id: 'wan22_14b', title: 'Wan 2.2 14B', subtitle: 'Highest quality',
