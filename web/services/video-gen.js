@@ -6,12 +6,31 @@ export const VIDEO_MODELS = {
     note: 'xAI text-to-video and image-to-video · uses your xAI quota', defaultSeconds: 5,
   },
   sdxl: {
-    id: 'sdxl', title: 'ModelsLab Video', subtitle: 'Cloud · ModelsLab',
-    note: 'Text-to-video through ModelsLab · uses your ModelsLab quota', defaultSeconds: 2,
+    id: 'sdxl', title: 'Stable Diffusion Video', subtitle: 'Cloud · ModelsLab',
+    note: 'Text-to-video through ModelsLab / Stable Diffusion API · uses your ModelsLab quota', defaultSeconds: 2,
+  },
+  'stable-diffusion-api': {
+    id: 'stable-diffusion-api', title: 'Stable Diffusion Video', subtitle: 'Cloud · ModelsLab',
+    note: 'Text-to-video through ModelsLab / Stable Diffusion API · uses your ModelsLab quota', defaultSeconds: 2,
+  },
+  'wan2.6-t2v': {
+    id: 'wan2.6-t2v', title: 'wan2.6-t2v', subtitle: 'Cloud · ModelsLab',
+    note: 'Text-to-video through ModelsLab with model_id wan2.6-t2v · uses your ModelsLab quota', defaultSeconds: 2,
   },
   atlas: {
     id: 'atlas', title: 'Atlas Video', subtitle: 'Cloud · Atlas Cloud',
     note: 'Wan 2.7 through Atlas Cloud · up to 30s stitched locally', defaultSeconds: 5,
+<<<<<<< HEAD
+  },
+  seedance: {
+    id: 'seedance', title: 'Seedance 2.0', subtitle: 'Cloud · Seedance2',
+    note: 'Seedance 2.0 text-to-video · 16-30s is stitched locally', defaultSeconds: 5,
+  },
+  wanvideo_5b: {
+    id: 'wanvideo_5b', title: 'WanVideo Long', subtitle: 'Consistent long clips',
+    note: 'WanVideoWrapper · block-swap + context windows · one coherent pass up to 120s · slow but no drift', defaultSeconds: 5,
+=======
+>>>>>>> origin/main
   },
   wan22_14b: {
     id: 'wan22_14b', title: 'Wan 2.2 14B', subtitle: 'Highest quality',
@@ -28,22 +47,28 @@ export const VIDEO_MODELS = {
 };
 
 /**
- * Generate a video. Returns { results: [{url,type}], meta, prompt }.
- * onProgress(job) is called on each poll tick.
+ * Generate a video. Returns { results: [{url,type}], meta, status, prompt }.
+ * onProgress(job) is called on each poll tick. opts.onStart(jobId) fires once the
+ * job is queued (so the caller can offer a cancel button); opts.timeoutMs caps the poll.
  */
-export async function generateVideo({ prompt, model, aspect, seconds, startImage }, onProgress) {
+export async function generateVideo({ prompt, model, aspect, seconds, startImage, startImages }, onProgress, opts = {}) {
+  const images = Array.isArray(startImages) ? startImages : (startImage ? [startImage] : []);
   const { jobId } = await startVideoJob({
     prompt,
     model,
     aspect,
     seconds,
-    startImage: startImage?.dataUrl || '',
-    startImageName: startImage?.name || '',
+    startImage: images[0]?.dataUrl || '',
+    startImageName: images[0]?.name || '',
+    startImages: images.map((img) => img.dataUrl),
+    startImageNames: images.map((img) => img.name || ''),
   });
-  const job = await pollJob(jobId, { onTick: onProgress });
+  if (opts.onStart) opts.onStart(jobId);
+  const job = await pollJob(jobId, { onTick: onProgress, timeoutMs: opts.timeoutMs });
   return {
     results: job.results || [],
     meta: job.meta || {},
+    status: job.status,
     modelTitle: job.meta?.modelTitle || VIDEO_MODELS[model]?.title || model,
     prompt,
   };

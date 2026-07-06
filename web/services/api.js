@@ -28,6 +28,7 @@ export const saveSecret = (provider, key) => postJson('/api/secrets', { provider
 
 export const startImageJob = (payload) => postJson('/api/generate/image', payload);
 export const startVideoJob = (payload) => postJson('/api/generate/video', payload);
+export const cancelJob = (jobId) => postJson(`/api/jobs/${encodeURIComponent(jobId)}/cancel`, {});
 
 async function getJob(jobId) {
   return readJson(await fetch(`/api/jobs/${encodeURIComponent(jobId)}`));
@@ -35,7 +36,7 @@ async function getJob(jobId) {
 
 /**
  * Poll a job until it finishes. Calls onTick({status, elapsed, meta}) each poll.
- * Resolves with the final job object (status === 'done'); rejects on error/timeout.
+ * Resolves with the final job object (status 'done' or 'cancelled'); rejects on error/timeout.
  */
 export async function pollJob(jobId, { onTick, intervalMs = 1500, timeoutMs = 60 * 60 * 1000 } = {}) {
   const deadline = Date.now() + timeoutMs;
@@ -51,7 +52,7 @@ export async function pollJob(jobId, { onTick, intervalMs = 1500, timeoutMs = 60
       continue;
     }
     if (onTick) onTick(job);
-    if (job.status === 'done') return job;
+    if (job.status === 'done' || job.status === 'cancelled') return job;
     if (job.status === 'error') throw new Error(job.error || 'Generation failed');
     if (Date.now() > deadline) throw new Error('Timed out waiting for the job');
     await sleep(intervalMs);

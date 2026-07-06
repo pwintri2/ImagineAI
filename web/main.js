@@ -2,7 +2,7 @@ import {
   getState, setState, loadPrefs, loadHistory, loadVideoHistory,
   saveHistoryEntry, saveVideoHistoryEntry,
 } from './state.js';
-import { getConfig } from './services/api.js';
+import { getConfig, cancelJob } from './services/api.js';
 import { generateImage } from './services/image-gen.js';
 import { generateVideo } from './services/video-gen.js';
 import * as PromptView from './ui/prompt-view.js';
@@ -63,8 +63,12 @@ function availabilityKey(config) {
     atlas: !!config.atlasConfigured,
     sdxl: !!(config.sdxlConfigured || config.stabilityConfigured),
     modelslab: !!config.modelslabConfigured,
+    seedance: !!config.seedanceConfigured,
   });
 }
+
+const MODELSLAB_VIDEO_MODELS = ['sdxl', 'stable-diffusion-api', 'wan2.6-t2v'];
+const STABLE_DIFFUSION_VIDEO_MODELS = ['sdxl', 'stable-diffusion-api'];
 
 async function refreshConfig(force) {
   if (configInFlight) return;
@@ -110,24 +114,29 @@ function reconcileEngine(config) {
   const atlas = !!config.atlasConfigured;
   const sdxl = !!(config.sdxlConfigured || config.stabilityConfigured);
   const modelslab = !!config.modelslabConfigured;
+  const seedance = !!config.seedanceConfigured;
   let engine = s.imageEngine;
-  if (engine === 'local' && !localImg) engine = xai ? 'xai' : (atlas ? 'atlas' : (sdxl ? 'sdxl' : (gemini ? 'gemini' : engine)));
-  if (engine === 'gemini' && !gemini) engine = localImg ? 'local' : (xai ? 'xai' : (atlas ? 'atlas' : (sdxl ? 'sdxl' : engine)));
-  if (engine === 'xai' && !xai) engine = localImg ? 'local' : (atlas ? 'atlas' : (sdxl ? 'sdxl' : (gemini ? 'gemini' : engine)));
-  if (engine === 'atlas' && !atlas) engine = localImg ? 'local' : (xai ? 'xai' : (sdxl ? 'sdxl' : (gemini ? 'gemini' : engine)));
-  if (engine === 'sdxl' && !sdxl) engine = localImg ? 'local' : (xai ? 'xai' : (atlas ? 'atlas' : (gemini ? 'gemini' : engine)));
+  if (engine === 'local' && !localImg) engine = xai ? 'xai' : (atlas ? 'atlas' : (seedance ? 'seedance' : (sdxl ? 'sdxl' : (gemini ? 'gemini' : engine))));
+  if (engine === 'gemini' && !gemini) engine = localImg ? 'local' : (xai ? 'xai' : (atlas ? 'atlas' : (seedance ? 'seedance' : (sdxl ? 'sdxl' : engine))));
+  if (engine === 'xai' && !xai) engine = localImg ? 'local' : (atlas ? 'atlas' : (seedance ? 'seedance' : (sdxl ? 'sdxl' : (gemini ? 'gemini' : engine))));
+  if (engine === 'atlas' && !atlas) engine = localImg ? 'local' : (xai ? 'xai' : (seedance ? 'seedance' : (sdxl ? 'sdxl' : (gemini ? 'gemini' : engine))));
+  if (engine === 'sdxl' && !sdxl) engine = localImg ? 'local' : (xai ? 'xai' : (atlas ? 'atlas' : (seedance ? 'seedance' : (gemini ? 'gemini' : engine))));
+  if (engine === 'seedance' && !seedance) engine = localImg ? 'local' : (xai ? 'xai' : (atlas ? 'atlas' : (sdxl ? 'sdxl' : (gemini ? 'gemini' : engine))));
   if (engine !== s.imageEngine) setState({ imageEngine: engine });
 
   let vModel = s.videoModel;
   const v = config.models?.video || {};
-  const selectedVideoAvailable = vModel === 'xai' ? xai : (vModel === 'atlas' ? atlas : (vModel === 'sdxl' ? modelslab : !!v[vModel]));
+  const selectedVideoAvailable = vModel === 'xai'
+    ? xai
+    : (vModel === 'atlas' ? atlas : (vModel === 'seedance' ? seedance : (MODELSLAB_VIDEO_MODELS.includes(vModel) ? modelslab : !!v[vModel])));
   if (!selectedVideoAvailable) {
     if (v.wan22_14b) vModel = 'wan22_14b';
     else if (v.wan22_ti2v_5b) vModel = 'wan22_ti2v_5b';
     else if (v.wan21_1_3b) vModel = 'wan21_1_3b';
     else if (xai) vModel = 'xai';
     else if (atlas) vModel = 'atlas';
-    else if (modelslab) vModel = 'sdxl';
+    else if (seedance) vModel = 'seedance';
+    else if (modelslab) vModel = 'stable-diffusion-api';
     else vModel = '';
   }
   if (vModel !== s.videoModel) setState({ videoModel: vModel });
@@ -138,6 +147,7 @@ function updateStatus(config) {
   if (localImg) setStatus(true, 'ComfyUI ready');
   else if (config.xaiConfigured) setStatus(true, 'Grok ready');
   else if (config.atlasConfigured) setStatus(true, 'Atlas ready');
+  else if (config.seedanceConfigured) setStatus(true, 'Seedance ready');
   else if (config.modelslabConfigured) setStatus(true, 'ModelsLab ready');
   else if (config.sdxlConfigured || config.stabilityConfigured) setStatus(true, 'SDXL ready');
   else if (config.geminiConfigured) setStatus(true, 'Gemini ready');
@@ -166,6 +176,7 @@ async function handleGenerateImage() {
   if (engine === 'gemini' && !s.config.geminiConfigured) { showToast('No Gemini key saved — open Settings to add one.', 'error'); return; }
   if (engine === 'xai' && !s.config.xaiConfigured) { showToast('No xAI key saved — open Settings to add one.', 'error'); return; }
   if (engine === 'atlas' && !s.config.atlasConfigured) { showToast('No Atlas key saved — open Settings to add one as atlas.', 'error'); return; }
+  if (engine === 'seedance' && !s.config.seedanceConfigured) { showToast('No Seedance key saved — open Settings to add one as seedance.', 'error'); return; }
   if (engine === 'sdxl' && !(s.config.sdxlConfigured || s.config.stabilityConfigured)) { showToast('No ModelsLab/SDXL key saved — open Settings to add one.', 'error'); return; }
   const sourceImage = PromptView.getSourceImage();
   if (sourceImage && !['local', 'gemini', 'xai'].includes(engine)) {
@@ -178,14 +189,22 @@ async function handleGenerateImage() {
   const count = s.imageCount;
   const loadingLabel = sourceImage
     ? (engine === 'gemini' ? 'Asking Gemini to edit…' : (engine === 'xai' ? 'Asking Grok Imagine to edit…' : 'Editing on your GPU…'))
+<<<<<<< HEAD
+    : (engine === 'gemini' ? 'Asking Gemini…' : (engine === 'xai' ? 'Asking Grok Imagine…' : (engine === 'atlas' ? 'Asking Atlas…' : (engine === 'seedance' ? 'Asking Seedance…' : (engine === 'sdxl' ? 'Asking ModelsLab…' : 'Rendering on your GPU…')))));
+=======
     : (engine === 'gemini' ? 'Asking Gemini…' : (engine === 'xai' ? 'Asking Grok Imagine…' : (engine === 'atlas' ? 'Asking Atlas…' : (engine === 'sdxl' ? 'Asking ModelsLab…' : 'Rendering on your GPU…'))));
+>>>>>>> origin/main
   GalleryView.renderLoading(count, { label: loadingLabel });
   const started = Date.now();
 
   try {
     const progressBase = sourceImage
       ? (engine === 'gemini' ? 'Gemini is editing' : (engine === 'xai' ? 'Grok Imagine is editing' : 'Z-Image editing'))
+<<<<<<< HEAD
+      : (engine === 'gemini' ? 'Gemini is painting' : (engine === 'xai' ? 'Grok Imagine is painting' : (engine === 'atlas' ? 'Atlas is painting' : (engine === 'seedance' ? 'Seedance is rendering a still' : (engine === 'sdxl' ? 'ModelsLab is painting' : 'Z-Image rendering')))));
+=======
       : (engine === 'gemini' ? 'Gemini is painting' : (engine === 'xai' ? 'Grok Imagine is painting' : (engine === 'atlas' ? 'Atlas is painting' : (engine === 'sdxl' ? 'ModelsLab is painting' : 'Z-Image rendering'))));
+>>>>>>> origin/main
     const { results, modelTitle } = await generateImage(
       { prompt, engine, aspect: s.aspectRatio, count, steps: s.steps, sourceImage },
       (job) => GalleryView.updateStatus(progressLabel(job, started, progressBase)),
@@ -215,37 +234,61 @@ async function handleGenerateVideo() {
     ? !!s.config.xaiConfigured
     : model === 'atlas'
       ? !!s.config.atlasConfigured
-    : model === 'sdxl'
+    : model === 'seedance'
+      ? !!s.config.seedanceConfigured
+    : MODELSLAB_VIDEO_MODELS.includes(model)
       ? !!s.config.modelslabConfigured
     : !!(s.config.comfyReachable && s.config.models?.video?.[model]);
   if (!available) {
     showToast(model === 'xai'
       ? 'No xAI key saved — open Settings to add one.'
-      : (model === 'atlas' ? 'No Atlas key saved — open Settings to add one as atlas.' : (model === 'sdxl' ? 'No ModelsLab key saved — open Settings to add one.' : 'That video model is not available in ComfyUI.')),
+      : (model === 'atlas' ? 'No Atlas key saved — open Settings to add one as atlas.' : (model === 'seedance' ? 'No Seedance key saved — open Settings to add one as seedance.' : (MODELSLAB_VIDEO_MODELS.includes(model) ? 'No ModelsLab or Stable Diffusion API key saved — open Settings to add one.' : 'That video model is not available in ComfyUI.'))),
     'error');
     return;
   }
-  const startImage = VideoPromptView.getStartImage();
-  if (startImage && !['wan22_ti2v_5b', 'xai', 'atlas'].includes(model)) {
-    showToast('Start images work with Wan 2.2 TI2V 5B, Grok Imagine, or Atlas. Select one of those first.', 'info');
+  const startImages = VideoPromptView.getStartImages();
+  if (startImages.length && !['wan22_ti2v_5b', 'wan22_14b', 'xai', 'atlas'].includes(model)) {
+    showToast('Start images work with Wan 2.2 TI2V 5B / 14B, Grok Imagine, or Atlas. Select one of those first.', 'info');
     return;
   }
+  if (startImages.length > 1 && !['wan22_ti2v_5b', 'wan22_14b', 'xai'].includes(model)) {
+    showToast('Only the first image is used here. Multiple images mix on Grok, or become keyframes on local Wan 2.2 TI2V 5B / 14B.', 'info');
+  }
 
+  const seconds = videoSecondsForModel(model, s.videoSeconds);
+  const isLocalModel = ['wanvideo_5b', 'wan22_14b', 'wan22_ti2v_5b', 'wan21_1_3b'].includes(model);
+  let currentJobId = null;
   setState({ isGeneratingVideo: true });
   VideoPromptView.setGenerating(true);
-  VideoGalleryView.renderLoading({ modelTitle: videoModelTitle(model) });
+  VideoGalleryView.renderLoading({ modelTitle: videoModelTitle(model), showControls: isLocalModel });
+  VideoGalleryView.onCancelClick(async () => {
+    if (!currentJobId) return;
+    VideoGalleryView.markCancelling();
+    try { await cancelJob(currentJobId); } catch (e) { console.warn('Cancel failed:', e); }
+  });
   const started = Date.now();
+  // Long local clips render block-by-block and can run for a while; give the poll a wide window.
+  const timeoutMs = Math.max(60 * 60 * 1000, seconds * 4 * 60 * 1000);
 
   try {
-    const progressBase = model === 'xai' ? 'Grok Imagine is rendering' : (model === 'atlas' ? 'Atlas is rendering' : (model === 'sdxl' ? 'ModelsLab is rendering' : 'Wan is generating frames'));
-    const { results, modelTitle } = await generateVideo(
-      { prompt, model, aspect: s.videoAspect, seconds: videoSecondsForModel(model, s.videoSeconds), startImage },
-      (job) => VideoGalleryView.updateStatus(progressLabel(job, started, progressBase)),
+    const progressBase = model === 'xai' ? 'Grok Imagine is rendering' : (model === 'atlas' ? 'Atlas is rendering' : (model === 'seedance' ? 'Seedance is rendering' : (MODELSLAB_VIDEO_MODELS.includes(model) ? 'Stable Diffusion is rendering' : 'Wan is generating frames')));
+    const { results, modelTitle, status } = await generateVideo(
+      { prompt, model, aspect: s.videoAspect, seconds, startImage: startImages[0] || null, startImages },
+      (job) => {
+        VideoGalleryView.updateStatus(videoProgressLabel(job, started, progressBase));
+        VideoGalleryView.updateProgress(job.meta?.progress, job.meta?.note);
+      },
+      { onStart: (id) => { currentJobId = id; }, timeoutMs },
     );
-    if (!results.length) throw new Error('No video was returned.');
-    VideoGalleryView.renderResults(results, { modelTitle, prompt });
-    showToast('Video created!', 'success');
-    saveVideoHistoryEntry({ prompt, modelTitle, videos: results, createdAt: Date.now() });
+    if (status === 'cancelled') {
+      VideoGalleryView.renderCancelled();
+      showToast('Video cancelled.', 'info');
+    } else {
+      if (!results.length) throw new Error('No video was returned.');
+      VideoGalleryView.renderResults(results, { modelTitle, prompt });
+      showToast('Video created!', 'success');
+      saveVideoHistoryEntry({ prompt, modelTitle, videos: results, createdAt: Date.now() });
+    }
   } catch (err) {
     console.error('Video generation failed:', err);
     VideoGalleryView.renderError(friendlyError(err));
@@ -256,18 +299,43 @@ async function handleGenerateVideo() {
   }
 }
 
+function videoProgressLabel(job, started, base) {
+  const meta = job.meta || {};
+  const elapsed = Math.max(0, Math.round((Date.now() - started) / 1000));
+  if (meta.phase === 'stitch' || meta.phase === 'done') {
+    return `Stitching blocks together… ${elapsed}s`;
+  }
+  if (meta.phase === 'block' && meta.blockTotal) {
+    const done = Math.round(meta.producedSeconds || 0);
+    const target = Math.round(meta.targetSeconds || 0);
+    const secLabel = meta.blockSeconds ? ` · ${meta.blockSeconds}s block` : '';
+    return `Block ${meta.blockIndex}/${meta.blockTotal}${secLabel} · ${done}/${target}s done · ${elapsed}s`;
+  }
+  return progressLabel(job, started, base);
+}
+
 function videoSecondsForModel(model, seconds) {
   const parsed = Number.parseInt(seconds, 10);
   const value = Number.isFinite(parsed) ? parsed : 2;
+<<<<<<< HEAD
+  const cloud = ['xai', 'atlas', 'seedance'].includes(model);
+  const cloudLong = MODELSLAB_VIDEO_MODELS.includes(model);
+  const local = ['wanvideo_5b', 'wan22_14b', 'wan22_ti2v_5b', 'wan21_1_3b'].includes(model);
+  const max = cloud ? 30 : ((cloudLong || local) ? 120 : 5);
+=======
   const max = ['xai', 'atlas', 'sdxl'].includes(model) ? 30 : 5;
+>>>>>>> origin/main
   return Math.max(1, Math.min(max, value));
 }
 
 function videoModelTitle(model) {
   if (model === 'xai') return 'Grok Imagine Video';
   if (model === 'atlas') return 'Atlas Video';
-  if (model === 'sdxl') return 'ModelsLab Video';
+  if (model === 'seedance') return 'Seedance 2.0 Video';
+  if (STABLE_DIFFUSION_VIDEO_MODELS.includes(model)) return 'Stable Diffusion Video';
+  if (model === 'wan2.6-t2v') return 'wan2.6-t2v';
   if (model === 'wan22_ti2v_5b') return 'Wan 2.2 TI2V 5B';
+  if (model === 'wanvideo_5b') return 'WanVideo 5B (long)';
   if (model === 'wan22_14b') return 'Wan 2.2 14B';
   return 'Wan 2.1 1.3B';
 }
@@ -280,6 +348,9 @@ function progressLabel(job, started, base) {
 
 function friendlyError(err) {
   const msg = err?.message || String(err);
+  if (/out of memory|exceed allowed memory|allocation on device|cuda out of memory/i.test(msg)) {
+    return 'The GPU ran out of memory. Free VRAM first (unload other ComfyUI models or stop Ollama/LLM models), pick a smaller ratio, or switch to the lighter Wan 2.2 TI2V 5B, then try again.';
+  }
   if (/timed out/i.test(msg)) return 'Generation timed out. Try a shorter video or fewer steps.';
   if (/not reachable|offline|ComfyUI is not/i.test(msg)) return 'ComfyUI is not reachable. Start it or check the URL in Settings.';
   return msg.length > 240 ? msg.slice(0, 240) + '…' : msg;
