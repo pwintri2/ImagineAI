@@ -3,10 +3,7 @@ import os
 import sys
 import unittest
 import tempfile
-<<<<<<< HEAD
 import urllib.error
-=======
->>>>>>> origin/main
 from pathlib import Path
 from unittest.mock import patch
 
@@ -211,7 +208,6 @@ class AtlasTests(unittest.TestCase):
         self.assertEqual(payloads[0]["prompt_extend"], False)
         self.assertEqual(payloads[0]["seed"], 123)
 
-<<<<<<< HEAD
     def test_atlas_wan27_copyright_flag_retries_without_prompt_extend(self):
         submits = []
 
@@ -363,6 +359,61 @@ class AtlasTests(unittest.TestCase):
         self.assertEqual([p["seed"] for p in submits], [123, 123])
         self.assertEqual([p["prompt_extend"] for p in submits], [True, False])
 
+    def test_atlas_image_edit_model_resolution(self):
+        # Legacy text-to-image default has no edit sibling -> edit default.
+        self.assertEqual(server.atlas_image_edit_model("seedream-3.0"), server.DEFAULT_ATLAS_IMAGE_EDIT_MODEL)
+        # An explicit edit model is used as-is.
+        self.assertEqual(server.atlas_image_edit_model("alibaba/qwen-image/edit"), "alibaba/qwen-image/edit")
+        # A settings override wins over the built-in default.
+        self.assertEqual(
+            server.atlas_image_edit_model("seedream-3.0", {"atlasImageEditModel": "google/nano-banana/edit"}),
+            "google/nano-banana/edit",
+        )
+
+    def test_atlas_generate_image_with_reference_uploads_once_and_uses_images_array(self):
+        submits = []
+
+        def fake_request(path, key, payload=None, method="GET", timeout=120):
+            if path == "/model/generateImage":
+                submits.append(dict(payload))
+                return {"data": {"id": f"img-{len(submits)}"}}
+            if path.startswith("/model/prediction/img-"):
+                return {"data": {"status": "completed", "outputs": ["https://example.test/image.png"]}}
+            raise AssertionError(f"Unexpected path {path}")
+
+        with patch.object(server, "atlas_upload_media", return_value="https://upload.example.test/ref.png") as upload, \
+             patch.object(server, "atlas_request_json", side_effect=fake_request), \
+             patch.object(server, "download_url_to_output", return_value=("/api/local-media?name=atlas.png", Path("atlas.png"), "atlas.png")):
+            urls = server.atlas_generate_image(
+                "make it a watercolor", "wide", 2, "bytedance/seedream-v4.5/edit", "secret",
+                source_image="data:image/png;base64,aGVsbG8=", source_image_name="ref.png",
+            )
+
+        self.assertEqual(len(urls), 2)
+        upload.assert_called_once()
+        self.assertEqual(len(submits), 2)
+        for payload in submits:
+            self.assertEqual(payload["model"], "bytedance/seedream-v4.5/edit")
+            self.assertEqual(payload["images"], ["https://upload.example.test/ref.png"])
+            self.assertEqual(payload["size"], "2848*1600")
+
+    def test_atlas_generate_image_without_reference_keeps_plain_payload(self):
+        submits = []
+
+        def fake_request(path, key, payload=None, method="GET", timeout=120):
+            if path == "/model/generateImage":
+                submits.append(dict(payload))
+                return {"data": {"id": "img-1"}}
+            if path == "/model/prediction/img-1":
+                return {"data": {"status": "completed", "outputs": ["https://example.test/image.png"]}}
+            raise AssertionError(f"Unexpected path {path}")
+
+        with patch.object(server, "atlas_request_json", side_effect=fake_request), \
+             patch.object(server, "download_url_to_output", return_value=("/api/local-media?name=atlas.png", Path("atlas.png"), "atlas.png")):
+            server.atlas_generate_image("a mountain", "wide", 1, "seedream-3.0", "secret")
+
+        self.assertEqual(submits, [{"model": "seedream-3.0", "prompt": "a mountain"}])
+
     def test_atlas_upload_media_sends_browser_user_agent(self):
         captured = {}
 
@@ -398,8 +449,6 @@ class AtlasTests(unittest.TestCase):
             with self.assertRaisesRegex(server.AtlasHTTPError, "Cloudflare"):
                 server.atlas_upload_media("data:image/png;base64,aGVsbG8=", "secret", "start.png")
 
-=======
->>>>>>> origin/main
     def test_long_atlas_video_is_stitched_from_segments(self):
         calls = []
 
@@ -429,8 +478,6 @@ class AtlasTests(unittest.TestCase):
         self.assertEqual(calls[0][6], "start.png")
         self.assertEqual([call[5] for call in calls[1:]], [""])
 
-<<<<<<< HEAD
-=======
     def test_long_atlas_video_returns_segments_when_stitching_is_unavailable(self):
         def fake_clip(prompt, aspect, seconds, model, key, start_image="", start_image_name="", on_progress=None):
             index = 1 if seconds == 15 and start_image else 2
@@ -455,7 +502,6 @@ class AtlasTests(unittest.TestCase):
         self.assertEqual(len(result["segments"]), 2)
         self.assertNotIn("mp4Path", result["segments"][0])
 
->>>>>>> origin/main
 
 if __name__ == "__main__":
     unittest.main()

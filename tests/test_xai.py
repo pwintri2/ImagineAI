@@ -36,8 +36,9 @@ class XaiTests(unittest.TestCase):
         self.assertEqual(len(result["segments"]), 2)
         self.assertNotIn("mp4Path", result["segments"][0])
         self.assertEqual([call[2] for call in calls], [15, 5])
-        self.assertEqual(calls[0][5], "data:image/png;base64,abc")
-        self.assertEqual(calls[1][5], "")
+        # Start images travel as a list since the multi-start-image feature.
+        self.assertEqual(calls[0][5], ["data:image/png;base64,abc"])
+        self.assertEqual(calls[1][5], [])
 
 
 if __name__ == "__main__":

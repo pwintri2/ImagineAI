@@ -179,8 +179,8 @@ async function handleGenerateImage() {
   if (engine === 'seedance' && !s.config.seedanceConfigured) { showToast('No Seedance key saved — open Settings to add one as seedance.', 'error'); return; }
   if (engine === 'sdxl' && !(s.config.sdxlConfigured || s.config.stabilityConfigured)) { showToast('No ModelsLab/SDXL key saved — open Settings to add one.', 'error'); return; }
   const sourceImage = PromptView.getSourceImage();
-  if (sourceImage && !['local', 'gemini', 'xai'].includes(engine)) {
-    showToast('Reference images work with Z-Image, Gemini, or Grok Imagine. Select one of those first.', 'info');
+  if (sourceImage && !['local', 'gemini', 'xai', 'atlas'].includes(engine)) {
+    showToast('Reference images work with Z-Image, Gemini, Grok Imagine, or Atlas. Select one of those first.', 'info');
     return;
   }
 
@@ -188,23 +188,15 @@ async function handleGenerateImage() {
   PromptView.setGenerating(true);
   const count = s.imageCount;
   const loadingLabel = sourceImage
-    ? (engine === 'gemini' ? 'Asking Gemini to edit…' : (engine === 'xai' ? 'Asking Grok Imagine to edit…' : 'Editing on your GPU…'))
-<<<<<<< HEAD
+    ? (engine === 'gemini' ? 'Asking Gemini to edit…' : (engine === 'xai' ? 'Asking Grok Imagine to edit…' : (engine === 'atlas' ? 'Asking Atlas to edit…' : 'Editing on your GPU…')))
     : (engine === 'gemini' ? 'Asking Gemini…' : (engine === 'xai' ? 'Asking Grok Imagine…' : (engine === 'atlas' ? 'Asking Atlas…' : (engine === 'seedance' ? 'Asking Seedance…' : (engine === 'sdxl' ? 'Asking ModelsLab…' : 'Rendering on your GPU…')))));
-=======
-    : (engine === 'gemini' ? 'Asking Gemini…' : (engine === 'xai' ? 'Asking Grok Imagine…' : (engine === 'atlas' ? 'Asking Atlas…' : (engine === 'sdxl' ? 'Asking ModelsLab…' : 'Rendering on your GPU…'))));
->>>>>>> origin/main
   GalleryView.renderLoading(count, { label: loadingLabel });
   const started = Date.now();
 
   try {
     const progressBase = sourceImage
-      ? (engine === 'gemini' ? 'Gemini is editing' : (engine === 'xai' ? 'Grok Imagine is editing' : 'Z-Image editing'))
-<<<<<<< HEAD
+      ? (engine === 'gemini' ? 'Gemini is editing' : (engine === 'xai' ? 'Grok Imagine is editing' : (engine === 'atlas' ? 'Atlas is editing' : 'Z-Image editing')))
       : (engine === 'gemini' ? 'Gemini is painting' : (engine === 'xai' ? 'Grok Imagine is painting' : (engine === 'atlas' ? 'Atlas is painting' : (engine === 'seedance' ? 'Seedance is rendering a still' : (engine === 'sdxl' ? 'ModelsLab is painting' : 'Z-Image rendering')))));
-=======
-      : (engine === 'gemini' ? 'Gemini is painting' : (engine === 'xai' ? 'Grok Imagine is painting' : (engine === 'atlas' ? 'Atlas is painting' : (engine === 'sdxl' ? 'ModelsLab is painting' : 'Z-Image rendering'))));
->>>>>>> origin/main
     const { results, modelTitle } = await generateImage(
       { prompt, engine, aspect: s.aspectRatio, count, steps: s.steps, sourceImage },
       (job) => GalleryView.updateStatus(progressLabel(job, started, progressBase)),
@@ -317,14 +309,10 @@ function videoProgressLabel(job, started, base) {
 function videoSecondsForModel(model, seconds) {
   const parsed = Number.parseInt(seconds, 10);
   const value = Number.isFinite(parsed) ? parsed : 2;
-<<<<<<< HEAD
   const cloud = ['xai', 'atlas', 'seedance'].includes(model);
   const cloudLong = MODELSLAB_VIDEO_MODELS.includes(model);
   const local = ['wanvideo_5b', 'wan22_14b', 'wan22_ti2v_5b', 'wan21_1_3b'].includes(model);
   const max = cloud ? 30 : ((cloudLong || local) ? 120 : 5);
-=======
-  const max = ['xai', 'atlas', 'sdxl'].includes(model) ? 30 : 5;
->>>>>>> origin/main
   return Math.max(1, Math.min(max, value));
 }
 
