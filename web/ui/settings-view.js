@@ -63,6 +63,10 @@ function render() {
           <span class="text-slate-500">image</span>
         </div>
         <div class="flex items-center justify-between">
+          <span class="text-slate-400">${dot(c.models?.image?.flux1_schnell_fp8)} FLUX.1 Schnell FP8</span>
+          <span class="text-slate-500">image</span>
+        </div>
+        <div class="flex items-center justify-between">
           <span class="text-slate-400">${dot(c.models?.video?.wan22_14b)} Wan 2.2 14B</span>
           <span class="text-slate-500">video</span>
         </div>

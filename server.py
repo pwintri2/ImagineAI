@@ -190,6 +190,8 @@ DEFAULT_NEGATIVE_VIDEO = (
     "fingers, motionless, cluttered background, extra legs, crowded background, "
     "walking backwards, nude, NSFW"
 )
+FLUX_SCHNELL_FP8_CHECKPOINT = os.environ.get("IMAGINEAI_FLUX_CHECKPOINT", "flux1-schnell-fp8.safetensors")
+FLUX_SCHNELL_TITLE = "FLUX.1 Schnell FP8"
 
 ASPECT_TO_SIZE = {
     "square": (1024, 1024),
@@ -600,6 +602,7 @@ def detect_models() -> dict[str, Any]:
         unets = comfy_request("/object_info/UNETLoader", timeout=8)
         clips = comfy_request("/object_info/CLIPLoader", timeout=8)
         vaes = comfy_request("/object_info/VAELoader", timeout=8)
+        checkpoints = comfy_request("/object_info/CheckpointLoaderSimple", timeout=8)
     except Exception:
         return info
     info["reachable"] = True
@@ -614,12 +617,14 @@ def detect_models() -> dict[str, Any]:
     unet_names = listed(unets, "unet_name")
     clip_names = listed(clips, "clip_name")
     vae_names = listed(vaes, "vae_name")
+    checkpoint_names = listed(checkpoints, "ckpt_name")
 
     info["image"]["zimage_turbo"] = (
         "z_image_turbo_bf16.safetensors" in unet_names
         and "qwen_3_4b.safetensors" in clip_names
         and "ae.safetensors" in vae_names
     )
+    info["image"]["flux1_schnell_fp8"] = FLUX_SCHNELL_FP8_CHECKPOINT in checkpoint_names
     info["video"]["wan22_14b"] = (
         "wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors" in unet_names
         and "wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors" in unet_names
@@ -708,6 +713,36 @@ def build_zimage_graph(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
                            "inputs": {"samples": ["36", 0], "amount": batch_size}}
             graph["3"]["inputs"]["latent_image"] = ["37", 0]
     return graph
+
+
+def build_flux_schnell_graph(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    prompt = str(data.get("prompt", "")).strip()
+    width = clamp_int(data.get("width"), 1024, 256, 2048)
+    height = clamp_int(data.get("height"), 1024, 256, 2048)
+    width -= width % 16
+    height -= height % 16
+    seed = clamp_int(data.get("seed"), random.randint(0, 2**32 - 1), 0, 2**63 - 1)
+    steps = clamp_int(data.get("steps"), 4, 1, 20)
+    batch_size = clamp_int(data.get("batch_size"), 1, 1, 4)
+
+    return {
+        "1": {"class_type": "CheckpointLoaderSimple",
+              "inputs": {"ckpt_name": FLUX_SCHNELL_FP8_CHECKPOINT}},
+        "2": {"class_type": "ModelSamplingFlux",
+              "inputs": {"model": ["1", 0], "max_shift": 1.15, "base_shift": 0.5,
+                         "width": width, "height": height}},
+        "3": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["1", 1], "text": prompt}},
+        "4": {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["3", 0]}},
+        "5": {"class_type": "EmptySD3LatentImage",
+              "inputs": {"width": width, "height": height, "batch_size": batch_size}},
+        "6": {"class_type": "KSampler",
+              "inputs": {"model": ["2", 0], "positive": ["3", 0], "negative": ["4", 0],
+                         "latent_image": ["5", 0], "seed": seed, "steps": steps, "cfg": 1.0,
+                         "sampler_name": "euler", "scheduler": "simple", "denoise": 1.0}},
+        "7": {"class_type": "VAEDecode", "inputs": {"samples": ["6", 0], "vae": ["1", 2]}},
+        "8": {"class_type": "SaveImage",
+              "inputs": {"images": ["7", 0], "filename_prefix": safe_prefix("imagineai_flux", prompt)}},
+    }
 
 
 def wan_frames(seconds: float, fps: float) -> int:
@@ -2621,7 +2656,34 @@ def run_image_job(job_id: str, payload: dict[str, Any]) -> None:
             update_job(job_id, status="done",
                        results=[{"url": u, "type": "image"} for u in urls],
                        meta={"engine": "modelslab", "modelTitle": f"ModelsLab {title}",
-                             "model": model, "provider": provider})
+                                 "model": model, "provider": provider})
+            return
+
+        if engine in ("flux", "flux1", "flux.1", "flux1-schnell", "flux1_schnell_fp8"):
+            if isinstance(source_image, str) and source_image.strip():
+                raise RuntimeError("FLUX.1 Schnell is text-to-image here. Use Z-Image, Gemini, Grok Imagine, or Atlas for reference-image edits.")
+            width, height = ASPECT_TO_SIZE.get(aspect, (1024, 1024))
+            graph = build_flux_schnell_graph({
+                "prompt": prompt,
+                "width": width, "height": height, "batch_size": count,
+                "steps": payload.get("steps", 4),
+                "seed": payload.get("seed"),
+            })
+            update_job(job_id, status="running", meta={"engine": "flux", "modelTitle": FLUX_SCHNELL_TITLE})
+            with COMFY_LOCK:
+                comfy_free_memory()
+                prompt_id = queue_comfy_prompt(graph, "imagineai-flux")
+                history = wait_for_history(prompt_id, COMFY_IMAGE_TIMEOUT,
+                                           on_state=lambda s: update_job(job_id, status=s))
+            err = extract_error(history)
+            if err:
+                raise RuntimeError(json.dumps(err, ensure_ascii=False))
+            entries = extract_entries(history, "image")
+            if not entries:
+                raise RuntimeError("ComfyUI returned no image.")
+            update_job(job_id, status="done",
+                       results=[{"url": entry_to_media_url(e), "type": "image"} for e in entries],
+                       meta={"engine": "flux", "modelTitle": FLUX_SCHNELL_TITLE})
             return
 
         # local Z-Image Turbo

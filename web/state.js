@@ -5,7 +5,7 @@ const VIDEO_HISTORY_KEY = 'imagineai_video_history';
 const PREFS_KEY = 'imagineai_prefs';
 
 const defaultPrefs = {
-  imageEngine: 'local',   // 'local' | 'gemini' | 'xai' | 'atlas' | 'sdxl' | 'seedance'
+  imageEngine: 'local',   // 'local' | 'flux' | 'gemini' | 'xai' | 'atlas' | 'sdxl' | 'seedance'
   aspectRatio: 'square',
   imageCount: 1,
   steps: 8,
