@@ -414,6 +414,103 @@ class AtlasTests(unittest.TestCase):
 
         self.assertEqual(submits, [{"model": "seedream-3.0", "prompt": "a mountain"}])
 
+    def test_atlas_generate_image_accepts_multiple_reference_images(self):
+        submits = []
+        uploads = []
+
+        def fake_upload(data_url, key, name=""):
+            uploads.append(data_url)
+            return f"https://upload.example.test/{len(uploads)}.png"
+
+        def fake_request(path, key, payload=None, method="GET", timeout=120):
+            if path == "/model/generateImage":
+                submits.append(dict(payload))
+                return {"data": {"id": "img-1"}}
+            if path == "/model/prediction/img-1":
+                return {"data": {"status": "completed", "outputs": ["https://example.test/image.png"]}}
+            raise AssertionError(f"Unexpected path {path}")
+
+        with patch.object(server, "atlas_upload_media", side_effect=fake_upload), \
+             patch.object(server, "atlas_request_json", side_effect=fake_request), \
+             patch.object(server, "download_url_to_output", return_value=("/api/local-media?name=atlas.png", Path("atlas.png"), "atlas.png")):
+            server.atlas_generate_image(
+                "combine them", "square", 1, "bytedance/seedream-v4.5/edit", "secret",
+                source_image=["data:image/png;base64,aaa=", "data:image/png;base64,bbb="],
+            )
+
+        self.assertEqual(len(uploads), 2)
+        self.assertEqual(submits[0]["images"],
+                         ["https://upload.example.test/1.png", "https://upload.example.test/2.png"])
+        self.assertEqual(submits[0]["size"], "2048*2048")
+
+    def test_merge_start_images_requires_atlas_key(self):
+        with patch.object(server, "atlas_key", return_value=("", "")):
+            with self.assertRaisesRegex(RuntimeError, "no Atlas API key"):
+                server.merge_start_images_to_data_url("a scene", "wide", ["data:image/png;base64,a", "data:image/png;base64,b"])
+
+    def test_merge_start_images_returns_data_url_of_saved_output(self):
+        png = b"\x89PNG\r\n\x1a\n" + b"fake-image-bytes"
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "atlas_image_1_ab.jpg"
+            out.write_bytes(png)
+            with patch.object(server, "atlas_key", return_value=("secret", "atlas")), \
+                 patch.object(server, "OUTPUTS_DIR", Path(tmp)), \
+                 patch.object(server, "atlas_generate_image",
+                              return_value=["/api/local-media?name=atlas_image_1_ab.jpg"]) as gen:
+                data_url = server.merge_start_images_to_data_url(
+                    "a castle by the sea", "wide",
+                    ["data:image/png;base64,a", "data:image/png;base64,b"],
+                )
+
+        self.assertTrue(data_url.startswith("data:image/png;base64,"))
+        args, kwargs = gen.call_args
+        self.assertEqual(kwargs["source_image"], ["data:image/png;base64,a", "data:image/png;base64,b"])
+        self.assertIn("Combine these 2 pictures", args[0])
+        self.assertIn("a castle by the sea", args[0])
+
+    def test_video_job_merges_start_images_before_engine(self):
+        received = {}
+        job_id = server.make_job("video")
+
+        def fake_xai(prompt, aspect, seconds, model, key, start_image="", on_progress=None):
+            received["start_image"] = start_image
+            return {"url": "/api/local-media?name=xai.webm", "type": "video"}
+
+        with patch.object(server, "merge_start_images_to_data_url",
+                          return_value="data:image/png;base64,MERGED") as merge, \
+             patch.object(server, "xai_key", return_value="xai-secret"), \
+             patch.object(server, "xai_generate_video", side_effect=fake_xai):
+            server.run_video_job(job_id, {
+                "prompt": "two dogs on the moon",
+                "model": "xai",
+                "aspect": "wide",
+                "seconds": 5,
+                "startImages": ["data:image/png;base64,a", "data:image/png;base64,b"],
+                "mergeStartImages": True,
+            })
+
+        merge.assert_called_once()
+        self.assertEqual(received["start_image"], ["data:image/png;base64,MERGED"])
+        self.assertEqual(server.get_job(job_id)["status"], "done")
+
+    def test_video_job_merge_switch_ignored_for_single_image(self):
+        job_id = server.make_job("video")
+
+        def fake_xai(prompt, aspect, seconds, model, key, start_image="", on_progress=None):
+            return {"url": "/api/local-media?name=xai.webm", "type": "video"}
+
+        with patch.object(server, "merge_start_images_to_data_url") as merge, \
+             patch.object(server, "xai_key", return_value="xai-secret"), \
+             patch.object(server, "xai_generate_video", side_effect=fake_xai):
+            server.run_video_job(job_id, {
+                "prompt": "a dog", "model": "xai", "aspect": "wide", "seconds": 5,
+                "startImages": ["data:image/png;base64,a"],
+                "mergeStartImages": True,
+            })
+
+        merge.assert_not_called()
+        self.assertEqual(server.get_job(job_id)["status"], "done")
+
     def test_atlas_upload_media_sends_browser_user_agent(self):
         captured = {}
 

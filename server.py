@@ -1684,20 +1684,23 @@ def atlas_generate_image(prompt: str, aspect: str, count: int, model: str, key: 
                          source_image: object = "", source_image_name: object = "") -> list[str]:
     requested = clamp_int(count, 1, 1, 4)
     model_id = model or DEFAULT_ATLAS_IMAGE_MODEL
-    has_source_image = isinstance(source_image, str) and bool(source_image.strip())
-    image_url = ""
-    if has_source_image:
+    if isinstance(source_image, list):
+        sources = [s for s in source_image if isinstance(s, str) and s.strip()]
+    else:
+        sources = [source_image] if isinstance(source_image, str) and source_image.strip() else []
+    image_urls: list[str] = []
+    for index, src in enumerate(sources):
         if on_progress:
-            on_progress("uploading image")
-        image_url = atlas_upload_media(source_image, key, source_image_name)
+            on_progress(f"uploading image {index + 1}/{len(sources)}" if len(sources) > 1 else "uploading image")
+        image_urls.append(atlas_upload_media(src, key, source_image_name if index == 0 else ""))
     urls: list[str] = []
     for index in range(requested):
         payload = {
             "model": model_id,
             "prompt": prompt,
         }
-        if has_source_image:
-            payload["images"] = [image_url]
+        if image_urls:
+            payload["images"] = image_urls
             size = ASPECT_TO_ATLAS_EDIT_SIZE.get(aspect)
             if size:
                 payload["size"] = size
@@ -1767,6 +1770,42 @@ def atlas_upload_media(data_url: object, key: str, original_name: object = "") -
     if not url:
         raise RuntimeError(f"Atlas media upload did not return a URL (response: {json.dumps(data)[:300]}).")
     return url
+
+
+def image_bytes_to_data_url(raw: bytes) -> str:
+    if raw.startswith(b"\x89PNG"):
+        mime = "image/png"
+    elif raw[:3] == b"\xff\xd8\xff":
+        mime = "image/jpeg"
+    elif raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        mime = "image/webp"
+    else:
+        mime = "image/jpeg"
+    return f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
+
+
+def merge_start_images_to_data_url(prompt: str, aspect: str, images: list[str], on_progress=None) -> str:
+    """Compose the uploaded pictures into one picture (as a data URL) that can
+    seed any single-start-image video engine."""
+    key, _ = atlas_key()
+    if not key:
+        raise RuntimeError(
+            "Merging start images uses Atlas image editing, but no Atlas API key is saved. "
+            "Add one in Settings as atlas, or turn the merge switch off."
+        )
+    edit_model = atlas_image_edit_model("", load_settings())
+    scene = prompt.strip() or "one natural, coherent scene"
+    merge_prompt = (
+        f"Combine these {len(images)} pictures into a single seamless picture that naturally unites "
+        f"all their subjects and elements, matching lighting and perspective. Scene: {scene}"
+    )
+    urls = atlas_generate_image(merge_prompt, aspect, 1, edit_model, key, on_progress=on_progress,
+                                source_image=images, source_image_name="merge-source.png")
+    name = urllib.parse.parse_qs(urllib.parse.urlparse(urls[0]).query).get("name", [""])[0]
+    path = OUTPUTS_DIR / name
+    if not name or not path.exists():
+        raise RuntimeError("The merged start image was not saved locally.")
+    return image_bytes_to_data_url(path.read_bytes())
 
 
 def atlas_video_model_id(model: str, has_start_image: bool) -> str:
@@ -2622,6 +2661,23 @@ def run_video_job(job_id: str, payload: dict[str, Any]) -> None:
     base_w, base_h = ASPECT_TO_SIZE.get(aspect, (1280, 720))
     settings = load_settings()
     try:
+        raw_start_images = payload.get("startImages")
+        start_images = ([s for s in raw_start_images if isinstance(s, str) and s.strip()]
+                        if isinstance(raw_start_images, list) else [])
+        if payload.get("mergeStartImages") and len(start_images) > 1:
+            update_job(job_id, status="running",
+                       meta={"note": f"Merging {len(start_images)} start images into one picture"})
+
+            def on_merge_progress(status: str) -> None:
+                update_job(job_id, status="running",
+                           meta={"note": f"Merging start images: {status}"})
+
+            merged = merge_start_images_to_data_url(prompt, aspect, start_images,
+                                                    on_progress=on_merge_progress)
+            payload["startImage"] = merged
+            payload["startImages"] = [merged]
+            payload["startImageName"] = "merged-start.png"
+            payload["startImageNames"] = ["merged-start.png"]
         if model in ("sdxl", "modelslab", "models-lab", "stable-diffusion-api") or model in MODELSLAB_DIRECT_VIDEO_MODELS:
             modelslab_model = str(
                 MODELSLAB_DIRECT_VIDEO_MODELS.get(model)
