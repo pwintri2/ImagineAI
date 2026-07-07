@@ -48,7 +48,7 @@ export const VIDEO_MODELS = {
  * onProgress(job) is called on each poll tick. opts.onStart(jobId) fires once the
  * job is queued (so the caller can offer a cancel button); opts.timeoutMs caps the poll.
  */
-export async function generateVideo({ prompt, model, aspect, seconds, startImage, startImages }, onProgress, opts = {}) {
+export async function generateVideo({ prompt, model, aspect, seconds, startImage, startImages, mergeStartImages }, onProgress, opts = {}) {
   const images = Array.isArray(startImages) ? startImages : (startImage ? [startImage] : []);
   const { jobId } = await startVideoJob({
     prompt,
@@ -59,6 +59,7 @@ export async function generateVideo({ prompt, model, aspect, seconds, startImage
     startImageName: images[0]?.name || '',
     startImages: images.map((img) => img.dataUrl),
     startImageNames: images.map((img) => img.name || ''),
+    mergeStartImages: !!mergeStartImages && images.length > 1,
   });
   if (opts.onStart) opts.onStart(jobId);
   const job = await pollJob(jobId, { onTick: onProgress, timeoutMs: opts.timeoutMs });

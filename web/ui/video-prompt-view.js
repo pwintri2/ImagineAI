@@ -72,6 +72,7 @@ export function render() {
   const stableDiffusionOk = modelAvailable('stable-diffusion-api');
   const showModelslab = !!s.config.modelslabConfigured;
   const startImages = s._draftVideoStartImages || [];
+  const mergeOn = !!s._draftVideoMergeStartImages;
   const imageError = s._draftVideoStartImageError || '';
   const maxSeconds = maxSecondsForModel(s.videoModel);
   const selectedSeconds = Math.min(s.videoSeconds, maxSeconds);
@@ -119,6 +120,16 @@ export function render() {
               <button type="button" data-remove-image="${i}" aria-label="Remove image ${i + 1}"
                 class="absolute -top-1.5 -right-1.5 rounded-full bg-black/70 text-white text-[11px] leading-none w-4 h-4 flex items-center justify-center hover:bg-red-500 transition-colors">×</button>
             </div>`).join('')}
+        </div>` : ''}
+        ${startImages.length > 1 ? `<div class="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
+          <div class="min-w-0">
+            <p class="text-xs font-medium text-slate-300">Merge into one picture</p>
+            <p class="text-[10px] text-slate-600">Atlas combines all pictures into a single base image for the video.</p>
+          </div>
+          <button id="mergeStartImagesToggle" type="button" role="switch" aria-checked="${mergeOn}" aria-label="Merge start images into one picture"
+            class="relative h-5 w-9 shrink-0 rounded-full transition-colors ${mergeOn ? 'bg-violet-600' : 'bg-white/15'}">
+            <span class="absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${mergeOn ? 'translate-x-4' : ''}"></span>
+          </button>
         </div>` : ''}
         <input id="videoStartImageInput" type="file" multiple accept="image/png,image/jpeg,image/webp"
           class="block w-full text-xs text-slate-400 file:mr-3 file:rounded-lg file:border-0 file:bg-white/10 file:px-3 file:py-2 file:text-xs file:font-medium file:text-slate-200 hover:file:bg-white/15">
@@ -212,6 +223,12 @@ function handleClick(e) {
     render();
     return;
   }
+  if (e.target.closest('#mergeStartImagesToggle')) {
+    getState()._draftVideoMergeStartImages = !getState()._draftVideoMergeStartImages;
+    rememberDraft();
+    render();
+    return;
+  }
   if (e.target.closest('#clearStartImages')) {
     getState()._draftVideoStartImages = [];
     getState()._draftVideoStartImageError = '';
@@ -299,6 +316,7 @@ export function setGenerating(isLoading) {
 
 export function getPrompt() { return promptInput?.value?.trim() || ''; }
 export function getStartImages() { return getState()._draftVideoStartImages || []; }
+export function getMergeStartImages() { return !!getState()._draftVideoMergeStartImages; }
 export function getStartImage() { return (getState()._draftVideoStartImages || [])[0] || null; }
 export function focusPrompt() { promptInput?.focus(); }
 
