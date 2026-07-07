@@ -109,6 +109,7 @@ function onConfigChange(config) {
 function reconcileEngine(config) {
   const s = getState();
   const localImg = !!(config.comfyReachable && config.models?.image?.zimage_turbo);
+  const fluxImg = !!(config.comfyReachable && config.models?.image?.flux1_schnell_fp8);
   const gemini = !!config.geminiConfigured;
   const xai = !!config.xaiConfigured;
   const atlas = !!config.atlasConfigured;
@@ -116,12 +117,14 @@ function reconcileEngine(config) {
   const modelslab = !!config.modelslabConfigured;
   const seedance = !!config.seedanceConfigured;
   let engine = s.imageEngine;
-  if (engine === 'local' && !localImg) engine = xai ? 'xai' : (atlas ? 'atlas' : (seedance ? 'seedance' : (sdxl ? 'sdxl' : (gemini ? 'gemini' : engine))));
-  if (engine === 'gemini' && !gemini) engine = localImg ? 'local' : (xai ? 'xai' : (atlas ? 'atlas' : (seedance ? 'seedance' : (sdxl ? 'sdxl' : engine))));
-  if (engine === 'xai' && !xai) engine = localImg ? 'local' : (atlas ? 'atlas' : (seedance ? 'seedance' : (sdxl ? 'sdxl' : (gemini ? 'gemini' : engine))));
-  if (engine === 'atlas' && !atlas) engine = localImg ? 'local' : (xai ? 'xai' : (seedance ? 'seedance' : (sdxl ? 'sdxl' : (gemini ? 'gemini' : engine))));
-  if (engine === 'sdxl' && !sdxl) engine = localImg ? 'local' : (xai ? 'xai' : (atlas ? 'atlas' : (seedance ? 'seedance' : (gemini ? 'gemini' : engine))));
-  if (engine === 'seedance' && !seedance) engine = localImg ? 'local' : (xai ? 'xai' : (atlas ? 'atlas' : (sdxl ? 'sdxl' : (gemini ? 'gemini' : engine))));
+  const localFallback = localImg ? 'local' : (fluxImg ? 'flux' : '');
+  if (engine === 'local' && !localImg) engine = fluxImg ? 'flux' : (xai ? 'xai' : (atlas ? 'atlas' : (seedance ? 'seedance' : (sdxl ? 'sdxl' : (gemini ? 'gemini' : engine)))));
+  if (engine === 'flux' && !fluxImg) engine = localImg ? 'local' : (xai ? 'xai' : (atlas ? 'atlas' : (seedance ? 'seedance' : (sdxl ? 'sdxl' : (gemini ? 'gemini' : engine)))));
+  if (engine === 'gemini' && !gemini) engine = localFallback || (xai ? 'xai' : (atlas ? 'atlas' : (seedance ? 'seedance' : (sdxl ? 'sdxl' : engine))));
+  if (engine === 'xai' && !xai) engine = localFallback || (atlas ? 'atlas' : (seedance ? 'seedance' : (sdxl ? 'sdxl' : (gemini ? 'gemini' : engine))));
+  if (engine === 'atlas' && !atlas) engine = localFallback || (xai ? 'xai' : (seedance ? 'seedance' : (sdxl ? 'sdxl' : (gemini ? 'gemini' : engine))));
+  if (engine === 'sdxl' && !sdxl) engine = localFallback || (xai ? 'xai' : (atlas ? 'atlas' : (seedance ? 'seedance' : (gemini ? 'gemini' : engine))));
+  if (engine === 'seedance' && !seedance) engine = localFallback || (xai ? 'xai' : (atlas ? 'atlas' : (sdxl ? 'sdxl' : (gemini ? 'gemini' : engine))));
   if (engine !== s.imageEngine) setState({ imageEngine: engine });
 
   let vModel = s.videoModel;
@@ -144,7 +147,9 @@ function reconcileEngine(config) {
 
 function updateStatus(config) {
   const localImg = !!(config.comfyReachable && config.models?.image?.zimage_turbo);
+  const fluxImg = !!(config.comfyReachable && config.models?.image?.flux1_schnell_fp8);
   if (localImg) setStatus(true, 'ComfyUI ready');
+  else if (fluxImg) setStatus(true, 'FLUX ready');
   else if (config.xaiConfigured) setStatus(true, 'Grok ready');
   else if (config.atlasConfigured) setStatus(true, 'Atlas ready');
   else if (config.seedanceConfigured) setStatus(true, 'Seedance ready');
@@ -172,7 +177,9 @@ async function handleGenerateImage() {
   if (s.isGenerating) return;
   const engine = s.imageEngine;
   const localImg = !!(s.config.comfyReachable && s.config.models?.image?.zimage_turbo);
+  const fluxImg = !!(s.config.comfyReachable && s.config.models?.image?.flux1_schnell_fp8);
   if (engine === 'local' && !localImg) { showToast('ComfyUI / Z-Image not available. Add a cloud key or start ComfyUI.', 'error'); return; }
+  if (engine === 'flux' && !fluxImg) { showToast('ComfyUI / FLUX.1 Schnell not available. Download the FP8 checkpoint or start ComfyUI.', 'error'); return; }
   if (engine === 'gemini' && !s.config.geminiConfigured) { showToast('No Gemini key saved — open Settings to add one.', 'error'); return; }
   if (engine === 'xai' && !s.config.xaiConfigured) { showToast('No xAI key saved — open Settings to add one.', 'error'); return; }
   if (engine === 'atlas' && !s.config.atlasConfigured) { showToast('No Atlas key saved — open Settings to add one as atlas.', 'error'); return; }
@@ -189,14 +196,14 @@ async function handleGenerateImage() {
   const count = s.imageCount;
   const loadingLabel = sourceImage
     ? (engine === 'gemini' ? 'Asking Gemini to edit…' : (engine === 'xai' ? 'Asking Grok Imagine to edit…' : (engine === 'atlas' ? 'Asking Atlas to edit…' : 'Editing on your GPU…')))
-    : (engine === 'gemini' ? 'Asking Gemini…' : (engine === 'xai' ? 'Asking Grok Imagine…' : (engine === 'atlas' ? 'Asking Atlas…' : (engine === 'seedance' ? 'Asking Seedance…' : (engine === 'sdxl' ? 'Asking ModelsLab…' : 'Rendering on your GPU…')))));
+    : (engine === 'gemini' ? 'Asking Gemini…' : (engine === 'xai' ? 'Asking Grok Imagine…' : (engine === 'atlas' ? 'Asking Atlas…' : (engine === 'seedance' ? 'Asking Seedance…' : (engine === 'sdxl' ? 'Asking ModelsLab…' : (engine === 'flux' ? 'Rendering with FLUX.1…' : 'Rendering on your GPU…'))))));
   GalleryView.renderLoading(count, { label: loadingLabel });
   const started = Date.now();
 
   try {
     const progressBase = sourceImage
       ? (engine === 'gemini' ? 'Gemini is editing' : (engine === 'xai' ? 'Grok Imagine is editing' : (engine === 'atlas' ? 'Atlas is editing' : 'Z-Image editing')))
-      : (engine === 'gemini' ? 'Gemini is painting' : (engine === 'xai' ? 'Grok Imagine is painting' : (engine === 'atlas' ? 'Atlas is painting' : (engine === 'seedance' ? 'Seedance is rendering a still' : (engine === 'sdxl' ? 'ModelsLab is painting' : 'Z-Image rendering')))));
+      : (engine === 'gemini' ? 'Gemini is painting' : (engine === 'xai' ? 'Grok Imagine is painting' : (engine === 'atlas' ? 'Atlas is painting' : (engine === 'seedance' ? 'Seedance is rendering a still' : (engine === 'sdxl' ? 'ModelsLab is painting' : (engine === 'flux' ? 'FLUX.1 rendering' : 'Z-Image rendering'))))));
     const { results, modelTitle } = await generateImage(
       { prompt, engine, aspect: s.aspectRatio, count, steps: s.steps, sourceImage },
       (job) => GalleryView.updateStatus(progressLabel(job, started, progressBase)),

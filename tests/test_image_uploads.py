@@ -35,6 +35,25 @@ class ImageUploadTests(unittest.TestCase):
         self.assertEqual(graph["3"]["inputs"]["latent_image"], ["37", 0])
         self.assertEqual(graph["3"]["inputs"]["denoise"], 0.4)
 
+    def test_flux_schnell_graph_uses_fp8_checkpoint(self):
+        graph = server.build_flux_schnell_graph({
+            "prompt": "a tiny glass greenhouse on mars",
+            "width": 1216,
+            "height": 832,
+            "batch_size": 2,
+            "steps": 4,
+            "seed": 123,
+        })
+
+        self.assertEqual(graph["1"]["class_type"], "CheckpointLoaderSimple")
+        self.assertEqual(graph["1"]["inputs"]["ckpt_name"], server.FLUX_SCHNELL_FP8_CHECKPOINT)
+        self.assertEqual(graph["2"]["class_type"], "ModelSamplingFlux")
+        self.assertEqual(graph["3"]["inputs"]["text"], "a tiny glass greenhouse on mars")
+        self.assertEqual(graph["5"]["inputs"], {"width": 1216, "height": 832, "batch_size": 2})
+        self.assertEqual(graph["6"]["inputs"]["cfg"], 1.0)
+        self.assertEqual(graph["6"]["inputs"]["steps"], 4)
+        self.assertEqual(graph["6"]["inputs"]["sampler_name"], "euler")
+
     def test_xai_image_upload_uses_edit_endpoint(self):
         calls = []
 

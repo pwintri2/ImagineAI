@@ -30,7 +30,7 @@
 
 ImagineAI is a clean, fast creative cockpit that doesn't send every prompt to a cloud service by default. A **single-file, standard-library-only** Python server (`server.py`) serves a lightweight web UI, drives your local **ComfyUI** install, and keeps settings, keys, and generated media on your machine.
 
-Generate and edit stills with **Z-Image Turbo**, render text-to-video and image-to-video with **Wan 2.1 / Wan 2.2** — and when the GPU is busy, optionally reach for **Gemini, Grok Imagine, Atlas Cloud, Seedance2.ai, ModelsLab, or Stability AI**.
+Generate and edit stills with **Z-Image Turbo**, render text-to-image with **FLUX.1 Schnell FP8**, render text-to-video and image-to-video with **Wan 2.1 / Wan 2.2** — and when the GPU is busy, optionally reach for **Gemini, Grok Imagine, Atlas Cloud, Seedance2.ai, ModelsLab, or Stability AI**.
 
 ## ⚡ Quick Start
 
@@ -54,7 +54,7 @@ python3 server.py --port 8799 --open
 
 ## 🎨 Feature Tour
 
-- 🖥️ **Local-first generation** — images via ComfyUI's Z-Image Turbo workflow; video via Wan 2.2 14B, Wan 2.2 TI2V 5B, or Wan 2.1 1.3B
+- 🖥️ **Local-first generation** — images via ComfyUI's Z-Image Turbo or FLUX.1 Schnell FP8 workflows; video via Wan 2.2 14B, Wan 2.2 TI2V 5B, or Wan 2.1 1.3B
 - 🎬 **Long-form local video** — clips up to **120 s**, rendered as blocks and stitched locally, plus a WanVideoWrapper single-pass path
 - ✏️ **Reference-image editing** — upload an image in the Image tab and edit with local Z-Image, Gemini, Grok Imagine, or Atlas
 - 🎞️ **Multiple start images** — in the Video tab: Grok Imagine blends them into one clip; local Wan 2.2 travels through them as keyframes
@@ -69,6 +69,7 @@ python3 server.py --port 8799 --open
 | Engine | 🖼️ Images | 🎥 Video | ✏️ Reference edit | 🎞️ Start image(s) | Max clip | Key |
 |---|:---:|:---:|:---:|:---:|---|---|
 | **Z-Image Turbo** — local · ComfyUI | ✅ | — | ✅ | — | — | — |
+| **FLUX.1 Schnell FP8** — local · ComfyUI | ✅ | — | — | — | — | — |
 | **Wan 2.1 / 2.2** — local · ComfyUI | — | ✅ | — | ✅ multiple → keyframes | 120 s stitched | — |
 | **Google Gemini** | ✅ | — | ✅ | — | — | `GEMINI_API_KEY` |
 | **xAI Grok Imagine** | ✅ | ✅ | ✅ | ✅ multiple → blended mix | 30 s (15 s per call, stitched) | `XAI_API_KEY` |

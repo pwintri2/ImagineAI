@@ -2,6 +2,7 @@ import { startImageJob, pollJob } from './api.js';
 
 export const ENGINES = {
   local: { id: 'local', title: 'Z-Image Turbo', subtitle: 'Local · ComfyUI', note: 'Fast local GPU render' },
+  flux: { id: 'flux', title: 'FLUX.1 Schnell', subtitle: 'Local · ComfyUI', note: 'FP8 checkpoint for smaller GPUs' },
   gemini: { id: 'gemini', title: 'Gemini', subtitle: 'Cloud · Google', note: 'Needs an API key' },
   xai: { id: 'xai', title: 'Grok Imagine', subtitle: 'Cloud · xAI', note: 'Needs an xAI API key' },
   atlas: { id: 'atlas', title: 'Atlas', subtitle: 'Cloud · Atlas Cloud', note: 'Needs an Atlas API key' },

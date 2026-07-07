@@ -38,6 +38,7 @@ export function init() {
 function engineAvailable(engineId) {
   const { config } = getState();
   if (engineId === 'local') return !!(config.comfyReachable && config.models?.image?.zimage_turbo);
+  if (engineId === 'flux') return !!(config.comfyReachable && config.models?.image?.flux1_schnell_fp8);
   if (engineId === 'gemini') return !!config.geminiConfigured;
   if (engineId === 'xai') return !!config.xaiConfigured;
   if (engineId === 'atlas') return !!config.atlasConfigured;
@@ -50,6 +51,7 @@ export function render() {
   if (!section) return;
   const s = getState();
   const localOk = engineAvailable('local');
+  const fluxOk = engineAvailable('flux');
   const geminiOk = engineAvailable('gemini');
   const xaiOk = engineAvailable('xai');
   const atlasOk = engineAvailable('atlas');
@@ -96,6 +98,7 @@ export function render() {
           <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Engine</label>
           <div id="engineChips" class="flex flex-wrap gap-1.5">
             ${chip(`⚡ ${ENGINES.local.title}`, 'local', 'engine', s.imageEngine === 'local', !localOk)}
+            ${chip(`◐ ${ENGINES.flux.title}`, 'flux', 'engine', s.imageEngine === 'flux', !fluxOk)}
             ${chip(`☁ ${ENGINES.gemini.title}`, 'gemini', 'engine', s.imageEngine === 'gemini', !geminiOk)}
             ${chip(`𝕏 ${ENGINES.xai.title}`, 'xai', 'engine', s.imageEngine === 'xai', !xaiOk)}
             ${chip(`◆ ${ENGINES.atlas.title}`, 'atlas', 'engine', s.imageEngine === 'atlas', !atlasOk)}
@@ -125,7 +128,7 @@ export function render() {
           <label class="text-xs text-slate-400 w-20">Steps: <span id="stepsOut" class="text-violet-300 font-medium">${s.steps}</span></label>
           <input id="stepsRange" type="range" min="4" max="20" value="${s.steps}" class="range-violet flex-1">
         </div>
-        <p class="text-[10px] text-slate-600 mt-1">Z-Image Turbo is tuned for ~8 steps. Higher = slower, not always better.</p>
+        <p class="text-[10px] text-slate-600 mt-1">${s.imageEngine === 'flux' ? 'FLUX.1 Schnell is tuned for 4 steps; higher is slower.' : 'Z-Image Turbo is tuned for ~8 steps. Higher = slower, not always better.'}</p>
       </details>
 
       <button id="generateBtn" type="button"
@@ -160,6 +163,7 @@ function engineHint(s) {
   if (s.imageEngine === 'sdxl') return `Cloud render via ${escapeHtml(s.config.modelslabImageModel || 'sdxl')} · uses your ModelsLab quota`;
   if (s.imageEngine === 'seedance') return `Seedance still via ${escapeHtml(s.config.seedanceVideoModel || 'seedance-2-0')} return_last_frame · uses Seedance video credits`;
   if (!s.config.comfyReachable) return 'ComfyUI not detected — start it, or switch to a cloud engine in Settings.';
+  if (s.imageEngine === 'flux') return 'Runs FLUX.1 Schnell FP8 locally on your GPU · text-to-image';
   return 'Runs locally on your GPU · free';
 }
 
@@ -167,7 +171,7 @@ function handleClick(e) {
   const c = e.target.closest('.chip');
   if (c && !c.disabled) {
     const { group, value } = c.dataset;
-    if (group === 'engine') setState({ imageEngine: value });
+    if (group === 'engine') setState({ imageEngine: value, ...(value === 'flux' ? { steps: 4 } : {}) });
     else if (group === 'ratio') setState({ aspectRatio: value });
     else if (group === 'count') setState({ imageCount: parseInt(value, 10) });
     rememberDraft();
