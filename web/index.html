@@ -32,6 +32,13 @@
         </div>
       </div>
       <div class="flex items-center gap-2">
+        <div id="gpuWidget" class="hidden items-center gap-2 px-2.5 py-1.5 rounded-xl border border-white/10 bg-white/5" title="GPU-geheugen">
+          <div class="gpu-battery" aria-hidden="true"><div id="gpuBatteryFill" class="gpu-battery-fill"></div></div>
+          <span id="gpuLabel" class="text-[11px] text-slate-400 tabular-nums">…</span>
+          <button id="gpuFreeBtn" type="button"
+            class="text-[11px] font-medium px-2 py-1 rounded-lg border border-white/10 bg-white/10 hover:bg-white/20 hover:border-violet-500/30 transition text-slate-200"
+            title="Maak het GPU-geheugen veilig leeg (ComfyUI- en Ollama-modellen worden ontladen; niets wordt afgebroken)">Leeg GPU</button>
+        </div>
         <div id="engineStatus" class="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-white/10 bg-white/5 text-[11px] text-slate-400">
           <span id="statusDot" class="w-2 h-2 rounded-full bg-slate-500"></span>
           <span id="statusLabel">checking…</span>

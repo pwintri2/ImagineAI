@@ -84,6 +84,8 @@ DEFAULT_VEO_RESOLUTION = os.environ.get("VEO_RESOLUTION", "720p")
 OPENAI_BASE = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 DEFAULT_SORA_VIDEO_MODEL = os.environ.get("SORA_VIDEO_MODEL", "sora-2")
 ELEVENLABS_BASE = os.environ.get("ELEVENLABS_BASE_URL", "https://api.elevenlabs.io/v1").rstrip("/")
+# Local Ollama — only used to unload its models when the user empties the GPU.
+OLLAMA_BASE = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
 # Optional override; when empty the ElevenLabs server-side default model is used.
 ELEVENLABS_MUSIC_MODEL = os.environ.get("ELEVENLABS_MUSIC_MODEL", "").strip()
 
@@ -570,6 +572,86 @@ def comfy_free_memory() -> None:
                       method="POST", timeout=15)
     except Exception:
         pass
+
+
+def gpu_memory_stats() -> dict[str, Any]:
+    """VRAM usage for the header battery: nvidia-smi first (sees every process,
+    including Ollama), ComfyUI's system stats as the fallback."""
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.used,memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            used, total = [float(part.strip()) for part in result.stdout.strip().splitlines()[0].split(",")[:2]]
+            if total > 0:
+                return {"available": True, "usedMb": round(used), "totalMb": round(total),
+                        "source": "nvidia-smi"}
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        stats = comfy_request("/system_stats", timeout=10)
+        for device in stats.get("devices") or []:
+            total = float(device.get("vram_total") or 0) / (1024 * 1024)
+            free = float(device.get("vram_free") or 0) / (1024 * 1024)
+            if total > 0:
+                return {"available": True, "usedMb": round(total - free), "totalMb": round(total),
+                        "source": "comfyui"}
+    except Exception:  # noqa: BLE001
+        pass
+    return {"available": False}
+
+
+def ollama_loaded_models() -> list[str]:
+    try:
+        with urllib.request.urlopen(f"{OLLAMA_BASE}/api/ps", timeout=5) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        return [str(m.get("name") or m.get("model") or "").strip()
+                for m in (data.get("models") or []) if m.get("name") or m.get("model")]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def ollama_unload_model(name: str) -> bool:
+    """keep_alive 0 makes Ollama drop the model's VRAM now; it reloads on next use."""
+    try:
+        body = json.dumps({"model": name, "keep_alive": 0}).encode("utf-8")
+        req = urllib.request.Request(f"{OLLAMA_BASE}/api/generate", data=body, method="POST")
+        req.add_header("Content-Type", "application/json")
+        with urllib.request.urlopen(req, timeout=30):
+            return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def free_gpu_memory() -> dict[str, Any]:
+    """Safely release VRAM: refuses while anything is rendering, then unloads
+    ComfyUI's cached models and every loaded Ollama model. Nothing is killed —
+    both reload their models automatically on the next job."""
+    with JOBS_LOCK:
+        busy = any(job.get("status") not in ("done", "error", "cancelled")
+                   for job in JOBS.values())
+    if not busy:
+        try:
+            queue = comfy_request("/queue", timeout=10)
+            busy = bool(queue.get("queue_running") or queue.get("queue_pending"))
+        except Exception:  # noqa: BLE001
+            pass  # ComfyUI unreachable -> nothing rendering there
+    if busy:
+        raise RuntimeError("A generation is still running — wait for it to finish "
+                           "(or cancel it) before emptying the GPU.")
+    freed: list[str] = []
+    try:
+        comfy_request("/free", {"unload_models": True, "free_memory": True},
+                      method="POST", timeout=15)
+        freed.append("ComfyUI models unloaded")
+    except Exception:  # noqa: BLE001
+        pass
+    unloaded = [name for name in ollama_loaded_models() if ollama_unload_model(name)]
+    if unloaded:
+        freed.append(f"Ollama unloaded: {', '.join(unloaded)}")
+    message = " · ".join(freed) if freed else "Nothing was loaded — the GPU was already empty."
+    return {"message": message, "freed": freed, **gpu_memory_stats()}
 
 
 def queue_contains_prompt(queue: dict[str, Any], prompt_id: str) -> bool:
@@ -5321,6 +5403,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.api_comfy_view(parsed.query)
             if path == "/api/local-media":
                 return self.api_local_media(parsed.query)
+            if path == "/api/gpu":
+                return self._json(200, gpu_memory_stats())
             return self.serve_static(path)
         except ComfyUnavailable as exc:
             return self._json(503, {"error": str(exc)})
@@ -5360,6 +5444,11 @@ class Handler(BaseHTTPRequestHandler):
                 if not str(data.get("prompt") or "").strip():
                     return self._json(400, {"error": "Prompt is required."})
                 return self._json(200, {"jobId": start_job("video", data)})
+            if path == "/api/gpu/free":
+                try:
+                    return self._json(200, free_gpu_memory())
+                except RuntimeError as exc:
+                    return self._json(409, {"error": str(exc)})
             return self._json(404, {"error": "Unknown endpoint"})
         except Exception as exc:  # noqa: BLE001
             return self._json(500, {"error": str(exc)})

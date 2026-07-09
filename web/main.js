@@ -2,7 +2,7 @@ import {
   getState, setState, loadPrefs, loadHistory, loadVideoHistory,
   saveHistoryEntry, saveVideoHistoryEntry,
 } from './state.js';
-import { getConfig, cancelJob } from './services/api.js';
+import { getConfig, cancelJob, getGpu, freeGpu } from './services/api.js';
 import { generateImage } from './services/image-gen.js';
 import { generateVideo } from './services/video-gen.js';
 import * as PromptView from './ui/prompt-view.js';
@@ -43,12 +43,53 @@ document.addEventListener('DOMContentLoaded', async () => {
     else handleGenerateImage();
   });
 
+  document.getElementById('gpuFreeBtn')?.addEventListener('click', handleFreeGpu);
+
   await refreshConfig(true);
   // Keep checking in the background so a late-starting ComfyUI (it shares the
   // GPU and may be mid-model-load at launch) self-heals to "ready" without the
   // user touching anything.
   setInterval(() => refreshConfig(false), 7000);
+  refreshGpu();
+  setInterval(refreshGpu, 7000);
 });
+
+async function refreshGpu() {
+  const widget = document.getElementById('gpuWidget');
+  if (!widget) return;
+  try {
+    const gpu = await getGpu();
+    if (!gpu.available) { widget.classList.remove('sm:flex'); return; }
+    widget.classList.add('sm:flex');  // 'hidden' stays for small screens, like engineStatus
+    const pct = Math.max(0, Math.min(100, Math.round((gpu.usedMb / gpu.totalMb) * 100)));
+    const fill = document.getElementById('gpuBatteryFill');
+    if (fill) {
+      fill.style.width = `${Math.max(pct > 0 ? 6 : 0, pct)}%`;
+      fill.style.background = pct > 85 ? '#f87171' : (pct > 60 ? '#fbbf24' : '#34d399');
+    }
+    const label = document.getElementById('gpuLabel');
+    if (label) label.textContent = `${(gpu.usedMb / 1024).toFixed(1)}/${(gpu.totalMb / 1024).toFixed(1)} GB`;
+    widget.title = `GPU-geheugen: ${pct}% in gebruik (${gpu.usedMb} MB van ${gpu.totalMb} MB)`;
+  } catch {
+    /* server briefly unreachable — keep the last reading */
+  }
+}
+
+async function handleFreeGpu() {
+  const btn = document.getElementById('gpuFreeBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Bezig…'; }
+  try {
+    const result = await freeGpu();
+    showToast(result.message || 'GPU leeggemaakt.', 'success');
+  } catch (err) {
+    showToast(err.message || 'Kon de GPU niet leegmaken.', 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Leeg GPU'; }
+    // VRAM release takes a moment; refresh twice so the battery settles.
+    setTimeout(refreshGpu, 1000);
+    setTimeout(refreshGpu, 4000);
+  }
+}
 
 let configInFlight = false;
 let lastAvailKey = '';
