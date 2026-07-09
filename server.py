@@ -4097,6 +4097,16 @@ def run_video_job(job_id: str, payload: dict[str, Any]) -> None:
             render_wanvideo_single_pass(job_id, payload, aspect, prompt)
             return
 
+        # Only an EXPLICIT local Wan choice may reach the local renderer. An
+        # unknown model id (e.g. a stale app window sending a model this server
+        # doesn't know) must never silently turn into hours of GPU block
+        # rendering — surface it and let the user pick a model on purpose.
+        if model not in ("wan21_1_3b", "wan22_ti2v_5b", "wan22_14b"):
+            raise RuntimeError(
+                f'Unknown video model "{model}" — refusing to fall back to local Wan rendering. '
+                "Close and reopen the app window so the interface matches the server, then pick "
+                "a model in the Video tab."
+            )
         total_seconds = clamp_int(payload.get("seconds"), 5, 1, LOCAL_MAX_STITCHED_SECONDS)
         title = local_video_title(model)
         # Long clips are rendered as blocks and stitched together; the 14B model

@@ -151,6 +151,16 @@ class DirectorGenerationTests(unittest.TestCase):
         self.assertTrue(all(s["tier"] == "free" for s in result["scenes"]))
         self.assertEqual(len(xai_calls), 0)  # free tier prefers Atlas' Wan over Grok
 
+    def test_unknown_model_never_falls_back_to_local_blocks(self):
+        # A stale app window sending a model id this server doesn't know must
+        # error out instead of silently grinding local Wan blocks for an hour.
+        job_id = server.make_job("video")
+        server.run_video_job(job_id, {"prompt": "a garden", "model": "director-v2-typo",
+                                      "seconds": 60})
+        job = server.get_job(job_id)
+        self.assertEqual(job["status"], "error")
+        self.assertIn("Unknown video model", job["error"])
+
     def test_all_engines_refused_asks_the_user(self):
         def always_refuse(*args, **kwargs):
             raise RuntimeError("content filter blocked this video")
