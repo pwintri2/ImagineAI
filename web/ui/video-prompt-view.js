@@ -67,9 +67,8 @@ function modelAvailable(id) {
   if (id === 'sora') return !!config.soraConfigured;
   if (id === 'seedance') return !!config.seedanceConfigured;
   if (id === 'director') {
-    // Needs at least one chain-capable engine.
-    return !!(config.atlasConfigured || config.xaiConfigured || config.geminiConfigured
-      || (config.comfyReachable && (config.models?.video?.wan22_ti2v_5b || config.models?.video?.wan22_14b)));
+    // Cloud engines only — Director never renders on local Wan.
+    return !!(config.atlasConfigured || config.xaiConfigured || config.geminiConfigured);
   }
   if (MODELSLAB_VIDEO_MODELS.includes(id)) return !!config.modelslabConfigured;
   return !!(config.comfyReachable && config.models?.video?.[id]);
@@ -267,8 +266,8 @@ function videoHint(s, anyModel) {
     return `OpenAI Sora via ${escapeHtml(s.config.soraVideoModel || 'sora-2')} · audio included · longer clips use Sora's native extensions. Note: OpenAI retires this API on September 24, 2026.`;
   }
   if (s.videoModel === 'director') {
-    if (!modelAvailable('director')) return 'Director needs at least one chain-capable engine: local Wan 2.2, Atlas, Grok, or a Gemini key for Veo.';
-    return 'Plans your idea as scenes (via Gemini when configured), picks an engine per scene by content — Wan gets the artistic scenes, Grok the mildly edgy ones, Veo the safe ones — chains each scene from the previous last frame, and crossfades everything (video + audio) into one film of up to 3 minutes.';
+    if (!modelAvailable('director')) return 'Director needs at least one cloud engine key: Atlas, xAI (Grok), or Gemini (Veo).';
+    return 'Plans your idea as scenes (via Gemini when configured) and picks a cloud engine per scene by content — Atlas Wan 2.7 for the artistic scenes, Grok for the mildly edgy ones, Veo for the safe ones. Never uses local Wan: if every engine refuses a scene, the job stops and tells you, so you can render that part with the model of your choice. Scenes chain and crossfade (video + audio) into one film of up to 3 minutes.';
   }
   if (s.videoModel === 'seedance') {
     if (!s.config.seedanceConfigured) return 'Add a Seedance key in Settings as seedance to generate Seedance videos.';

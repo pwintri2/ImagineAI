@@ -231,8 +231,7 @@ async function handleGenerateVideo() {
   const s = getState();
   if (s.isGeneratingVideo) return;
   const model = s.videoModel;
-  const directorReady = !!(s.config.atlasConfigured || s.config.xaiConfigured || s.config.geminiConfigured
-    || (s.config.comfyReachable && (s.config.models?.video?.wan22_ti2v_5b || s.config.models?.video?.wan22_14b)));
+  const directorReady = !!(s.config.atlasConfigured || s.config.xaiConfigured || s.config.geminiConfigured);
   const available = model === 'xai'
     ? !!s.config.xaiConfigured
     : model === 'atlas'
@@ -254,7 +253,7 @@ async function handleGenerateVideo() {
       : (model === 'atlas' ? 'No Atlas key saved — open Settings to add one as atlas.'
         : (model === 'veo' ? 'No Gemini key saved — open Settings to add one to use Veo.'
           : (model === 'sora' ? 'No OpenAI key saved — open Settings to add one as sora or openai.'
-            : (model === 'director' ? 'Director needs at least one chain-capable engine: local Wan 2.2, Atlas, Grok, or a Gemini key.'
+            : (model === 'director' ? 'Director needs at least one cloud engine key: Atlas, xAI (Grok), or Gemini (Veo).'
               : (model === 'seedance' ? 'No Seedance key saved — open Settings to add one as seedance.'
                 : (MODELSLAB_VIDEO_MODELS.includes(model) ? 'No ModelsLab or Stable Diffusion API key saved — open Settings to add one.'
                   : 'That video model is not available in ComfyUI.')))))),

@@ -3390,30 +3390,20 @@ def director_scene_tier(text: object) -> int:
 
 
 # Engine preference per tier — most permissive first for artistic scenes, best
-# quality first for safe ones. Only chain-capable engines take part (Seedance,
-# ModelsLab, and Sora cannot start from a carried frame). Free-tier scenes
-# prefer Atlas' cloud Wan 2.7 over local Wan for speed; local Wan (which has no
-# moderation at all) stays as the fallback when Atlas' output filter refuses.
+# quality first for safe ones. Cloud engines ONLY: the local Wan blocks are far
+# too slow to weave into a film, so when every cloud engine refuses a scene the
+# Director stops and asks the user to render that part with a model of their
+# own choosing instead of silently grinding the GPU.
 DIRECTOR_TIER_PREFS = {
-    2: ("atlas", "local", "xai", "veo"),
-    1: ("xai", "atlas", "local", "veo"),
-    0: ("veo", "atlas", "xai", "local"),
+    2: ("atlas", "xai", "veo"),
+    1: ("xai", "atlas", "veo"),
+    0: ("veo", "atlas", "xai"),
 }
-DIRECTOR_SEGMENT_SWEET_SPOT = {"veo": 8, "atlas": 15, "xai": 15, "local": 10}
+DIRECTOR_SEGMENT_SWEET_SPOT = {"veo": 8, "atlas": 15, "xai": 15}
 
 
 def director_available_engines() -> dict[str, dict[str, Any]]:
     engines: dict[str, dict[str, Any]] = {}
-    try:
-        models = detect_models()
-        video_models = (models.get("video") or {}) if models.get("reachable") else {}
-    except Exception:  # noqa: BLE001
-        video_models = {}
-    if video_models.get("wan22_ti2v_5b") or video_models.get("wan22_14b"):
-        engines["local"] = {
-            "ti2v": bool(video_models.get("wan22_ti2v_5b")),
-            "wan14b": bool(video_models.get("wan22_14b")),
-        }
     atlas_value, _ = atlas_key()
     if atlas_value:
         engines["atlas"] = {"key": atlas_value}
@@ -3429,8 +3419,8 @@ def director_pick_engine(tier: int, available: dict[str, dict[str, Any]]) -> str
         if engine in available:
             return engine
     raise RuntimeError(
-        "Director mode needs at least one chain-capable video engine: local Wan 2.2 "
-        "(ComfyUI), Atlas, Grok, or a Gemini key for Veo."
+        "Director mode needs at least one of: an Atlas key, an xAI (Grok) key, "
+        "or a Gemini key for Veo."
     )
 
 
@@ -3503,30 +3493,6 @@ def director_plan_scenes(prompt: str, scene_count: int, total_seconds: int, key:
         return None
 
 
-def director_render_local_segment(job_id: str, scene_prompt: str, aspect: str, seconds: int,
-                                  info: dict[str, Any], start_frame_name: str,
-                                  negative_prompt: str, seed: int,
-                                  prev_kind: str) -> tuple[Path, str, str]:
-    width, height = wan_block_dimensions(aspect)
-    use_ti2v = bool(start_frame_name) and info.get("ti2v")
-    kind = "wan22_ti2v_5b" if (use_ti2v or not info.get("wan14b")) else "wan22_14b"
-    data = {
-        "prompt": scene_prompt,
-        "negative_prompt": negative_prompt or DEFAULT_NEGATIVE_VIDEO,
-        "seconds": seconds,
-        "fps": None,
-        "seed": seed,
-        "steps": None,
-        "cfg": None,
-    }
-    # Free VRAM whenever the ComfyUI model changes (14B <-> TI2V 5B) or when a
-    # cloud scene or another job may have loaded something else in between.
-    path, frame_name = run_local_video_block(job_id, kind, data, width, height,
-                                             start_frame_name if use_ti2v else "",
-                                             free_first=(kind != prev_kind), emit_last_frame=True)
-    return path, frame_name, kind
-
-
 def director_generate_video(job_id: str, payload: dict[str, Any], prompt: str, aspect: str,
                             total_seconds: int, on_progress=None) -> dict[str, Any]:
     negative_prompt = str(payload.get("negativePrompt") or "").strip()
@@ -3553,160 +3519,128 @@ def director_generate_video(job_id: str, payload: dict[str, Any], prompt: str, a
     chain_hint = (" The provided start image is the exact final frame of the previous "
                   "scene — continue its motion and camera movement seamlessly.")
     produced: list[Path] = []
-    local_temp: list[Path] = []
-    temp_frames: list[str] = []   # ComfyUI input frames to clean up
     single_clip: dict[str, Any] | None = None
     scene_infos: list[dict[str, Any]] = []
-    carry_url = ""        # last frame as data URL, feeds cloud i2v
-    carry_frame = ""      # clean ComfyUI frame name, feeds local TI2V
-    prev_engine = ""
-    prev_local_kind = ""
+    carry_url = ""  # last frame as data URL, feeds the next scene's i2v
     remaining = total
     index = 0
-    try:
-        while remaining >= 4:  # sub-4s residues are dropped, not dispatched
-            index += 1
-            if job_cancel_requested(job_id):
-                raise JobCancelled()
-            scene = None
-            if scenes:
-                scene = scenes[min(index - 1, len(scenes) - 1)]
-                if index - 1 >= len(scenes):
-                    # Plan exhausted — keep evolving the finale instead of
-                    # wrapping back to the opening scene.
-                    scene = {"prompt": scene["prompt"] + " Continue the action naturally, evolving "
-                                                         "it further without restarting the scene.",
-                             "tier": scene.get("tier", 0)}
-            if scene:
-                base_text = scene["prompt"]
-                tier = max(base_tier, int(scene.get("tier") or 0), director_scene_tier(base_text))
-            else:
-                base_text = ""  # built per attempt via segment_prompt
-                tier = base_tier
-            engine = director_pick_engine(tier, available)
-            seconds_seg = director_segment_seconds(engine, remaining, caps)
-            if on_progress:
-                tier_label = {0: "safe", 1: "mild", 2: "free"}[tier]
-                on_progress(f"scene {index} · {engine} · {seconds_seg}s · {tier_label}")
-
-            start_image = carry_url or (payload.get("startImage") if index == 1 else "") or ""
-            clip_path: Path | None = None
-            clip: dict[str, Any] | None = None
-            new_carry_frame = ""
-            last_error: Exception | None = None
-            # Try the preferred engine chained, then unchained, then the next
-            # engine in this tier's preference order.
-            for candidate in [e for e in DIRECTOR_TIER_PREFS[tier] if e in available]:
-                if candidate != engine:
-                    seconds_seg = director_segment_seconds(candidate, remaining, caps)
-                attempts = [start_image, ""] if start_image else [""]
-                for attempt_image in attempts:
-                    # The continuity hint must only appear when a frame is attached.
-                    if scene:
-                        scene_text = base_text + (chain_hint if attempt_image else "")
-                    else:
-                        scene_text = segment_prompt(prompt, index, max(index, round(total / 10)),
-                                                    chained=bool(attempt_image))
-                    try:
-                        if candidate == "local":
-                            frame_name = ""
-                            if attempt_image:
-                                # Prefer the clean pre-H.264 frame when the previous
-                                # scene was local; otherwise upload the carried frame.
-                                frame_name = carry_frame or save_start_image_for_comfy(attempt_image)
-                                if frame_name and frame_name != carry_frame:
-                                    temp_frames.append(frame_name)
-                            clip_path, new_carry_frame, prev_local_kind = director_render_local_segment(
-                                job_id, scene_text, aspect, seconds_seg, available["local"],
-                                frame_name, negative_prompt, shared_seed,
-                                prev_kind=prev_local_kind if prev_engine == "local" else "")
-                            local_temp.append(clip_path)
-                            if new_carry_frame:
-                                temp_frames.append(new_carry_frame)
-                        elif candidate == "atlas":
-                            atlas_model = str(settings.get("atlasVideoModel") or DEFAULT_ATLAS_VIDEO_MODEL)
-                            clip = atlas_generate_video_clip(
-                                scene_text, aspect, seconds_seg, atlas_model, available["atlas"]["key"],
-                                attempt_image, "scene.png" if attempt_image else "",
-                                negative_prompt=negative_prompt, seed=shared_seed, seed_pinned=seed_pinned)
-                            clip_path = Path(str(clip.get("mp4Path") or ""))
-                        elif candidate == "xai":
-                            xai_model = str(settings.get("xaiVideoModel") or DEFAULT_XAI_VIDEO_MODEL)
-                            clip = xai_generate_video_clip(
-                                scene_text, aspect, seconds_seg, xai_model, available["xai"]["key"],
-                                [attempt_image] if attempt_image else [])
-                            clip_path = Path(str(clip.get("mp4Path") or ""))
-                        else:  # veo
-                            veo_model = str(settings.get("veoVideoModel") or DEFAULT_VEO_VIDEO_MODEL)
-                            clip = veo_generate_video_clip(
-                                scene_text, aspect, seconds_seg, veo_model, available["veo"]["key"],
-                                start_image=attempt_image,
-                                negative_prompt=negative_prompt, seed=shared_seed)
-                            clip_path = Path(str(clip.get("mp4Path") or ""))
-                        engine = candidate
-                        break
-                    except JobCancelled:
-                        raise
-                    except Exception as exc:  # noqa: BLE001
-                        last_error = exc
-                        clip_path = None
-                        clip = None
-                        if on_progress:
-                            on_progress(f"scene {index} · {candidate} failed; trying an alternative")
-                if clip_path is not None:
-                    break
-            if clip_path is None or not clip_path.exists():
-                raise RuntimeError(
-                    f"Scene {index} failed on every available engine"
-                    + (f' (last error: "{last_error}")' if last_error else ".")
-                )
-
-            produced.append(clip_path)
-            single_clip = clip  # cloud clips carry public urls; local clips leave None
-            scene_infos.append({"scene": index, "engine": engine, "seconds": seconds_seg,
-                                "tier": {0: "safe", 1: "mild", 2: "free"}[tier]})
-            carry_url = extract_last_frame_to_data_url(clip_path) or ""
-            carry_frame = new_carry_frame if engine == "local" else ""
-            prev_engine = engine
-            remaining -= seconds_seg
-
-        if on_progress:
-            on_progress("stitching the scenes into one film")
-        if len(produced) == 1:
-            if single_clip and single_clip.get("url"):
-                combined: dict[str, Any] | None = {"url": single_clip["url"]}
-                if single_clip.get("mp4Url"):
-                    combined["mp4Url"] = single_clip["mp4Url"]
-            else:
-                # A lone local block is a temp file — publish it as an output.
-                ensure_dirs()
-                name = f"video_{int(now())}_{uuid.uuid4().hex[:8]}.mp4"
-                public = OUTPUTS_DIR / name
-                shutil.copy2(produced[0], public)
-                webm_url = transcode_mp4_path_to_webm(public, timeout=900)
-                combined = {"url": webm_url or output_url(name), "mp4Url": output_url(name)}
-        else:
-            combined = stitch_video_paths(produced)
+    while remaining >= 4:  # sub-4s residues are dropped, not dispatched
+        index += 1
         if job_cancel_requested(job_id):
             raise JobCancelled()
-        if not combined or not combined.get("url"):
-            raise RuntimeError("The scenes were generated, but stitching them into one film failed.")
-        result: dict[str, Any] = {"url": combined["url"], "type": "video",
-                                  "seconds": total - remaining, "scenes": scene_infos}
-        if combined.get("mp4Url"):
-            result["mp4Url"] = combined["mp4Url"]
-        return result
-    finally:
-        for path in local_temp:
-            try:
-                path.unlink(missing_ok=True)
-            except Exception:
-                pass
-        for name in temp_frames:
-            try:
-                (COMFY_INPUT_DIR / name).unlink(missing_ok=True)
-            except Exception:
-                pass
+        scene = None
+        if scenes:
+            scene = scenes[min(index - 1, len(scenes) - 1)]
+            if index - 1 >= len(scenes):
+                # Plan exhausted — keep evolving the finale instead of
+                # wrapping back to the opening scene.
+                scene = {"prompt": scene["prompt"] + " Continue the action naturally, evolving "
+                                                     "it further without restarting the scene.",
+                         "tier": scene.get("tier", 0)}
+        if scene:
+            base_text = scene["prompt"]
+            tier = max(base_tier, int(scene.get("tier") or 0), director_scene_tier(base_text))
+        else:
+            base_text = ""  # built per attempt via segment_prompt
+            tier = base_tier
+        engine = director_pick_engine(tier, available)
+        seconds_seg = director_segment_seconds(engine, remaining, caps)
+        if on_progress:
+            tier_label = {0: "safe", 1: "mild", 2: "free"}[tier]
+            on_progress(f"scene {index} · {engine} · {seconds_seg}s · {tier_label}")
+
+        start_image = carry_url or (payload.get("startImage") if index == 1 else "") or ""
+        clip_path: Path | None = None
+        clip: dict[str, Any] | None = None
+        last_error: Exception | None = None
+        # Try the preferred engine chained, then unchained, then the next
+        # engine in this tier's preference order.
+        for candidate in [e for e in DIRECTOR_TIER_PREFS[tier] if e in available]:
+            if candidate != engine:
+                seconds_seg = director_segment_seconds(candidate, remaining, caps)
+            attempts = [start_image, ""] if start_image else [""]
+            for attempt_image in attempts:
+                # The continuity hint must only appear when a frame is attached.
+                if scene:
+                    scene_text = base_text + (chain_hint if attempt_image else "")
+                else:
+                    scene_text = segment_prompt(prompt, index, max(index, round(total / 10)),
+                                                chained=bool(attempt_image))
+                try:
+                    if candidate == "atlas":
+                        atlas_model = str(settings.get("atlasVideoModel") or DEFAULT_ATLAS_VIDEO_MODEL)
+                        clip = atlas_generate_video_clip(
+                            scene_text, aspect, seconds_seg, atlas_model, available["atlas"]["key"],
+                            attempt_image, "scene.png" if attempt_image else "",
+                            negative_prompt=negative_prompt, seed=shared_seed, seed_pinned=seed_pinned)
+                    elif candidate == "xai":
+                        xai_model = str(settings.get("xaiVideoModel") or DEFAULT_XAI_VIDEO_MODEL)
+                        clip = xai_generate_video_clip(
+                            scene_text, aspect, seconds_seg, xai_model, available["xai"]["key"],
+                            [attempt_image] if attempt_image else [])
+                    else:  # veo
+                        veo_model = str(settings.get("veoVideoModel") or DEFAULT_VEO_VIDEO_MODEL)
+                        clip = veo_generate_video_clip(
+                            scene_text, aspect, seconds_seg, veo_model, available["veo"]["key"],
+                            start_image=attempt_image,
+                            negative_prompt=negative_prompt, seed=shared_seed)
+                    clip_path = Path(str(clip.get("mp4Path") or ""))
+                    engine = candidate
+                    break
+                except JobCancelled:
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    last_error = exc
+                    clip_path = None
+                    clip = None
+                    if on_progress:
+                        on_progress(f"scene {index} · {candidate} failed; trying an alternative")
+            if clip_path is not None:
+                break
+        if clip_path is None or not clip_path.exists():
+            # This is the "ask the user" moment: no automatic local fallback —
+            # the user decides which model renders this part.
+            snippet = (base_text or prompt).strip()
+            if len(snippet) > 160:
+                snippet = snippet[:157] + "…"
+            tried = ", ".join(e for e in DIRECTOR_TIER_PREFS[tier] if e in available)
+            raise RuntimeError(
+                f"Scene {index} was refused by every available cloud engine ({tried})"
+                + (f' — last error: "{last_error}"' if last_error else "")
+                + ". Director never falls back to local Wan on its own: render this part "
+                  "yourself with the model of your choice (the local Wan chips have no "
+                  f"content filter), or reword it. Scene: “{snippet}”"
+            )
+
+        produced.append(clip_path)
+        single_clip = clip
+        scene_infos.append({"scene": index, "engine": engine, "seconds": seconds_seg,
+                            "tier": {0: "safe", 1: "mild", 2: "free"}[tier]})
+        carry_url = extract_last_frame_to_data_url(clip_path) or ""
+        remaining -= seconds_seg
+
+    if on_progress:
+        on_progress("stitching the scenes into one film")
+    if len(produced) == 1:
+        if single_clip and single_clip.get("url"):
+            combined: dict[str, Any] | None = {"url": single_clip["url"]}
+            if single_clip.get("mp4Url"):
+                combined["mp4Url"] = single_clip["mp4Url"]
+        else:
+            webm_url = transcode_mp4_path_to_webm(produced[0], timeout=900)
+            combined = {"url": webm_url or output_url(produced[0].name),
+                        "mp4Url": output_url(produced[0].name)}
+    else:
+        combined = stitch_video_paths(produced)
+    if job_cancel_requested(job_id):
+        raise JobCancelled()
+    if not combined or not combined.get("url"):
+        raise RuntimeError("The scenes were generated, but stitching them into one film failed.")
+    result: dict[str, Any] = {"url": combined["url"], "type": "video",
+                              "seconds": total - remaining, "scenes": scene_infos}
+    if combined.get("mp4Url"):
+        result["mp4Url"] = combined["mp4Url"]
+    return result
 
 
 # --------------------------------------------------------------------------- #

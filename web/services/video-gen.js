@@ -26,8 +26,8 @@ export const VIDEO_MODELS = {
     note: 'Google Veo 3.1 with native audio · uses your Gemini key · up to 60s, chained + crossfaded', defaultSeconds: 8,
   },
   director: {
-    id: 'director', title: 'Director', subtitle: 'Long film · mixed engines',
-    note: 'Up to 3 minutes · plans scenes, picks the engine per scene (Wan = most artistic freedom, Grok = some, Veo = strict) and chains them into one film', defaultSeconds: 60,
+    id: 'director', title: 'Director', subtitle: 'Long film · cloud engines',
+    note: 'Up to 3 minutes · scenes across Atlas / Grok / Veo by content (never local Wan) · stops and asks you when every engine refuses a scene', defaultSeconds: 60,
   },
   sora: {
     id: 'sora', title: 'Sora', subtitle: 'Cloud · OpenAI',

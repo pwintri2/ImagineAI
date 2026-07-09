@@ -19,13 +19,14 @@ class DirectorPlanningTests(unittest.TestCase):
         self.assertEqual(server.director_scene_tier("gruesome gore in an abandoned asylum"), 2)
 
     def test_pick_engine_respects_tier_preferences(self):
-        available = {"local": {}, "atlas": {}, "xai": {}, "veo": {}}
+        available = {"atlas": {}, "xai": {}, "veo": {}}
         self.assertEqual(server.director_pick_engine(0, available), "veo")
         self.assertEqual(server.director_pick_engine(1, available), "xai")
-        # Free tier prefers Atlas' cloud Wan for speed; local Wan is the fallback.
+        # Free tier prefers Atlas' cloud Wan; local Wan is never used.
         self.assertEqual(server.director_pick_engine(2, available), "atlas")
-        self.assertEqual(server.director_pick_engine(2, {"veo": {}, "local": {}}), "local")
-        with self.assertRaisesRegex(RuntimeError, "chain-capable"):
+        self.assertEqual(server.director_pick_engine(2, {"veo": {}}), "veo")
+        self.assertNotIn("local", [e for prefs in server.DIRECTOR_TIER_PREFS.values() for e in prefs])
+        with self.assertRaisesRegex(RuntimeError, "Atlas key"):
             server.director_pick_engine(0, {})
 
     def test_segment_seconds_never_leaves_tiny_tail(self):
@@ -33,8 +34,7 @@ class DirectorPlanningTests(unittest.TestCase):
         self.assertEqual(server.director_segment_seconds("atlas", 15), 15)
         self.assertEqual(server.director_segment_seconds("veo", 10), 6)     # veo snaps to 4/6/8
         self.assertEqual(server.director_segment_seconds("veo", 8), 8)
-        self.assertEqual(server.director_segment_seconds("local", 7), 7)
-        for engine in ("veo", "atlas", "xai", "local"):
+        for engine in ("veo", "atlas", "xai"):
             remaining = 180
             steps = 0
             while remaining > 0 and steps < 100:
@@ -144,12 +144,28 @@ class DirectorGenerationTests(unittest.TestCase):
 
     def test_heuristic_escalates_planned_tier(self):
         # The keyword heuristic acts as a floor: a scene the planner labels
-        # "mild" but that contains free-tier content still routes to Wan.
+        # "mild" but that contains free-tier content still routes to Atlas' Wan.
         scenes = [{"prompt": "A brutal gore-drenched hallway", "tier": 1}]
         result, atlas_calls, xai_calls = self._run(
             "corridor", 12, {"atlas": {"key": "k"}, "xai": {"key": "k"}}, scenes=scenes)
         self.assertTrue(all(s["tier"] == "free" for s in result["scenes"]))
-        self.assertEqual(len(xai_calls), 0)  # free tier avoids Grok when Wan-family exists
+        self.assertEqual(len(xai_calls), 0)  # free tier prefers Atlas' Wan over Grok
+
+    def test_all_engines_refused_asks_the_user(self):
+        def always_refuse(*args, **kwargs):
+            raise RuntimeError("content filter blocked this video")
+
+        with patch.object(server, "director_available_engines",
+                          return_value={"atlas": {"key": "k"}, "xai": {"key": "k"}}), \
+             patch.object(server, "director_plan_scenes", return_value=None), \
+             patch.object(server, "gemini_key", return_value=""), \
+             patch.object(server, "atlas_generate_video_clip", side_effect=always_refuse), \
+             patch.object(server, "xai_generate_video_clip", side_effect=always_refuse), \
+             patch.object(server, "job_cancel_requested", return_value=False), \
+             patch.object(server, "load_settings", return_value={
+                 "atlasVideoModel": "m", "xaiVideoModel": "m", "veoVideoModel": "m"}):
+            with self.assertRaisesRegex(RuntimeError, "model of your choice"):
+                server.director_generate_video("job-1", {}, "a peaceful garden", "wide", 12)
 
 
 if __name__ == "__main__":
