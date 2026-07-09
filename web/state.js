@@ -12,6 +12,8 @@ const defaultPrefs = {
   videoModel: 'wan22_14b',
   videoAspect: 'wide',
   videoSeconds: 2,
+  videoNegativePrompt: '',
+  videoSeed: '',
 };
 
 const state = {

@@ -273,7 +273,17 @@ async function handleGenerateVideo() {
   try {
     const progressBase = model === 'xai' ? 'Grok Imagine is rendering' : (model === 'atlas' ? 'Atlas is rendering' : (model === 'seedance' ? 'Seedance is rendering' : (MODELSLAB_VIDEO_MODELS.includes(model) ? 'Stable Diffusion is rendering' : 'Wan is generating frames')));
     const { results, modelTitle, status } = await generateVideo(
-      { prompt, model, aspect: s.videoAspect, seconds, startImage: startImages[0] || null, startImages, mergeStartImages },
+      {
+        prompt,
+        model,
+        aspect: s.videoAspect,
+        seconds,
+        startImage: startImages[0] || null,
+        startImages,
+        mergeStartImages,
+        negativePrompt: VideoPromptView.supportsNegativePrompt(model) ? (s.videoNegativePrompt || '').trim() : '',
+        seed: VideoPromptView.supportsSeed(model) ? s.videoSeed : '',
+      },
       (job) => {
         VideoGalleryView.updateStatus(videoProgressLabel(job, started, progressBase));
         VideoGalleryView.updateProgress(job.meta?.progress, job.meta?.note);
@@ -317,10 +327,10 @@ function videoProgressLabel(job, started, base) {
 function videoSecondsForModel(model, seconds) {
   const parsed = Number.parseInt(seconds, 10);
   const value = Number.isFinite(parsed) ? parsed : 2;
-  const cloud = ['xai', 'atlas', 'seedance'].includes(model);
+  const cloud = ['xai', 'seedance'].includes(model);
   const cloudLong = MODELSLAB_VIDEO_MODELS.includes(model);
   const local = ['wanvideo_5b', 'wan22_14b', 'wan22_ti2v_5b', 'wan21_1_3b'].includes(model);
-  const max = cloud ? 30 : ((cloudLong || local) ? 120 : 5);
+  const max = model === 'atlas' ? 60 : (cloud ? 30 : ((cloudLong || local) ? 120 : 5));
   return Math.max(1, Math.min(max, value));
 }
 

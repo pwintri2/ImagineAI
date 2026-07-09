@@ -32,8 +32,19 @@ function chip(label, value, group, active, disabled = false) {
 
 const LOCAL_WAN_MODELS = ['wanvideo_5b', 'wan22_14b', 'wan22_ti2v_5b', 'wan21_1_3b'];
 
+// Which engines actually consume the Advanced fields; the others ignore them
+// server-side, so the UI must not promise what the engine drops.
+export function supportsNegativePrompt(model) {
+  return model === 'atlas' || MODELSLAB_VIDEO_MODELS.includes(model) || LOCAL_WAN_MODELS.includes(model);
+}
+export function supportsSeed(model) {
+  return model === 'atlas' || model === 'seedance'
+    || MODELSLAB_VIDEO_MODELS.includes(model) || LOCAL_WAN_MODELS.includes(model);
+}
+
 function maxSecondsForModel(model) {
-  if (['xai', 'atlas', 'seedance'].includes(model)) return 30;
+  if (model === 'atlas') return 60;   // ~15s Wan 2.7 segments, chained + crossfaded locally
+  if (['xai', 'seedance'].includes(model)) return 30;
   if (MODELSLAB_VIDEO_MODELS.includes(model)) return 120;   // cloud, stitched — no local VRAM used
   if (LOCAL_WAN_MODELS.includes(model)) return 120;   // rendered in ~10s blocks, stitched together
   return 5;
@@ -76,6 +87,11 @@ export function render() {
   const imageError = s._draftVideoStartImageError || '';
   const maxSeconds = maxSecondsForModel(s.videoModel);
   const selectedSeconds = Math.min(s.videoSeconds, maxSeconds);
+  const negOk = supportsNegativePrompt(s.videoModel);
+  const seedOk = supportsSeed(s.videoModel);
+  // Remember the user's toggle across re-renders; first render opens the panel
+  // only when it already holds values.
+  const advancedOpen = s._draftVideoAdvancedOpen ?? !!(s.videoNegativePrompt || s.videoSeed);
 
   section.innerHTML = `
     <div class="space-y-4">
@@ -151,6 +167,28 @@ export function render() {
         </div>
       </div>
 
+      <details id="videoAdvanced" class="group"${advancedOpen ? ' open' : ''}>
+        <summary class="text-[10px] font-semibold uppercase tracking-wider text-slate-500 cursor-pointer hover:text-slate-400 transition flex items-center gap-1 select-none">
+          <span class="group-open:rotate-90 transition-transform text-[8px]">▶</span> Advanced
+        </summary>
+        <div class="mt-3 grid grid-cols-1 sm:grid-cols-[1fr_140px] gap-2">
+          <div class="space-y-1.5${negOk ? '' : ' opacity-50'}">
+            <label for="videoNegativeInput" class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Negative prompt</label>
+            <textarea id="videoNegativeInput" rows="2" ${negOk ? '' : 'disabled'}
+              class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30 resize-none"
+              placeholder="What to avoid… e.g. blurry, watermark, text, deformed hands">${escapeHtml(s.videoNegativePrompt || '')}</textarea>
+            ${negOk ? '' : `<p class="text-[10px] text-slate-600">${escapeHtml(VIDEO_MODELS[s.videoModel]?.title || s.videoModel)} does not support a negative prompt.</p>`}
+          </div>
+          <div class="space-y-1.5${seedOk ? '' : ' opacity-50'}">
+            <label for="videoSeedInput" class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Seed</label>
+            <input id="videoSeedInput" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="10" value="${escapeAttr(s.videoSeed || '')}" ${seedOk ? '' : 'disabled'}
+              class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30"
+              placeholder="random">
+            <p class="text-[10px] text-slate-600">${seedOk ? 'Same seed + prompt repeats a look.' : `Not supported by ${escapeHtml(VIDEO_MODELS[s.videoModel]?.title || s.videoModel)}.`}</p>
+          </div>
+        </div>
+      </details>
+
       <button id="videoGenerateBtn" type="button"
         class="btn-generate btn-video w-full rounded-2xl px-6 py-3.5 text-base font-semibold text-white flex items-center justify-center gap-2">
         <span id="videoBtnIcon">🎬</span><span id="videoBtnText">Create Video</span>
@@ -167,6 +205,19 @@ export function render() {
     document.getElementById('secOut').textContent = `${range.value}s`;
     setState({ videoSeconds: parseInt(range.value, 10) });
   });
+  // Write-through to persisted state without re-rendering, so typing keeps focus.
+  document.getElementById('videoNegativeInput')?.addEventListener('input', (e) => {
+    setState({ videoNegativePrompt: e.target.value });
+  });
+  document.getElementById('videoSeedInput')?.addEventListener('input', (e) => {
+    const digits = e.target.value.replace(/[^0-9]/g, '');
+    if (digits !== e.target.value) e.target.value = digits;
+    setState({ videoSeed: digits });
+  });
+  const advanced = document.getElementById('videoAdvanced');
+  advanced?.addEventListener('toggle', () => {
+    getState()._draftVideoAdvancedOpen = advanced.open;
+  });
   startImageInput?.addEventListener('change', handleStartImageChange);
 }
 
@@ -177,7 +228,7 @@ function videoHint(s, anyModel) {
   }
   if (s.videoModel === 'atlas') {
     if (!s.config.atlasConfigured) return 'Add an Atlas key in Settings as atlas to generate Atlas videos.';
-    return `Atlas Cloud video via ${escapeHtml(s.config.atlasVideoModel || 'alibaba/wan-2.7/text-to-video')} · 16-30s is stitched locally from multiple Wan 2.7 segments.`;
+    return `Atlas Cloud video via ${escapeHtml(s.config.atlasVideoModel || 'alibaba/wan-2.7/text-to-video')} · 16-60s is stitched locally: each segment continues from the previous one's last frame and the seams are crossfaded.`;
   }
   if (s.videoModel === 'seedance') {
     if (!s.config.seedanceConfigured) return 'Add a Seedance key in Settings as seedance to generate Seedance videos.';

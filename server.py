@@ -97,13 +97,19 @@ SEEDANCE_MAX_STITCHED_SECONDS = 30
 SEEDANCE_STILL_SECONDS = 4
 ATLAS_MAX_SECONDS_PER_REQUEST = 10
 ATLAS_WAN27_MAX_SECONDS_PER_REQUEST = 15
-ATLAS_MAX_STITCHED_SECONDS = 30
+ATLAS_MAX_STITCHED_SECONDS = 60
 ATLAS_IMAGE_TIMEOUT = float(os.environ.get("IMAGINEAI_ATLAS_IMAGE_TIMEOUT", "600"))
 ATLAS_VIDEO_TIMEOUT = float(os.environ.get("IMAGINEAI_ATLAS_VIDEO_TIMEOUT", "1200"))
 # Wan's output moderation (copyright/IP/sensitive-content) is stochastic and often
 # misfires on harmless prompts; retry a flagged clip this many extra times.
 ATLAS_MODERATION_RETRIES = max(0, min(5, int(os.environ.get("ATLAS_MODERATION_RETRIES", "2"))))
 SEEDANCE_VIDEO_TIMEOUT = float(os.environ.get("IMAGINEAI_SEEDANCE_VIDEO_TIMEOUT", "1800"))
+
+# Stitched multi-segment videos crossfade this long at every seam so segments
+# flow into each other instead of hard-cutting. Chained segments start from the
+# previous segment's last frame, so the fade also hides the duplicated frame.
+# Set to 0 to restore plain hard-cut concatenation.
+STITCH_OVERLAP_SECONDS = max(0.0, min(2.0, float(os.environ.get("IMAGINEAI_STITCH_OVERLAP_SECONDS", "0.5"))))
 
 # Local Wan long-form video: render in blocks and stitch them into one clip.
 # The 14B model is too heavy to render 120s in a single pass on a small GPU, so
@@ -1288,7 +1294,7 @@ def xai_generate_video_clip(prompt: str, aspect: str, duration: int, model: str,
     raise TimeoutError("xAI video generation timed out.")
 
 
-def segment_prompt(prompt: str, index: int, total: int) -> str:
+def segment_prompt(prompt: str, index: int, total: int, chained: bool = False) -> str:
     if total <= 1:
         return prompt
     if index == 1:
@@ -1297,11 +1303,16 @@ def segment_prompt(prompt: str, index: int, total: int) -> str:
         role = "the ending — bring the action to a natural close"
     else:
         role = "pick up exactly where the previous part left off, do not restart"
+    continuity = (
+        " The provided start image is the exact final frame of the previous segment — "
+        "continue its motion and camera movement seamlessly from that frame."
+        if chained else ""
+    )
     return (
         f"{prompt}\n\n"
         f"Segment {index} of {total} — {role}. This is one single continuous story from beginning to end: "
         f"keep the same characters, wardrobe, setting, lighting, colour palette, art style, and camera "
-        f"language as the previous part, and carry the motion and story forward smoothly."
+        f"language as the previous part, and carry the motion and story forward smoothly.{continuity}"
     )
 
 
@@ -1340,23 +1351,51 @@ def xai_generate_video(prompt: str, aspect: str, seconds: object, model: str, ke
 
     clips: list[dict[str, Any]] = []
     total = len(segment_lengths)
+    prev_path: Path | None = None
     for index, segment in enumerate(segment_lengths, start=1):
         def segment_progress(status: str, progress: object, idx=index, total_segments=total) -> None:
             if on_progress:
                 on_progress(f"segment {idx}/{total_segments}: {status}", progress)
 
         # Reference images shape the whole clip, so keep them on every segment; a single
-        # start frame only seeds the opening segment.
+        # start frame only seeds the opening segment — later segments chain from the
+        # previous segment's last frame so the motion carries across the seam.
         segment_images = images if is_reference_mix else (images if index == 1 else [])
-        clips.append(xai_generate_video_clip(
-            segment_prompt(prompt, index, total),
-            aspect,
-            segment,
-            model,
-            key,
-            segment_images,
-            on_progress=segment_progress,
-        ))
+        chained = False
+        if not is_reference_mix and index > 1 and prev_path is not None:
+            segment_progress("extracting last frame for continuity", None)
+            carried = extract_last_frame_to_data_url(prev_path)
+            if carried:
+                segment_images = [carried]
+                chained = True
+        try:
+            clip = xai_generate_video_clip(
+                segment_prompt(prompt, index, total, chained=chained),
+                aspect,
+                segment,
+                model,
+                key,
+                segment_images,
+                on_progress=segment_progress,
+            )
+        except Exception:  # noqa: BLE001
+            if not chained:
+                raise
+            # The carried frame added a new failure surface (image rejection);
+            # retry this segment unchained rather than sinking the whole job.
+            segment_progress("chained segment failed; retrying without the carried frame", None)
+            clip = xai_generate_video_clip(
+                segment_prompt(prompt, index, total),
+                aspect,
+                segment,
+                model,
+                key,
+                [],
+                on_progress=segment_progress,
+            )
+        clips.append(clip)
+        clip_path = str(clip.get("mp4Path") or "")
+        prev_path = Path(clip_path) if clip_path else None
 
     paths = [Path(str(clip.get("mp4Path") or "")) for clip in clips if clip.get("mp4Path")]
     combined_url = concat_mp4_paths_to_webm(paths)
@@ -1466,7 +1505,8 @@ def seedance_poll_result(task_id: str, key: str, on_progress=None,
 
 
 def seedance_start_video_task(prompt: str, aspect: str, seconds: object, model: str, key: str,
-                              return_last_frame: bool = False, generate_audio: bool = True) -> str:
+                              return_last_frame: bool = False, generate_audio: bool = True,
+                              seed: object = None) -> str:
     duration = clamp_int(seconds, 5, 4, SEEDANCE_MAX_SECONDS_PER_REQUEST)
     model_id = model or DEFAULT_SEEDANCE_VIDEO_MODEL
     payload = {
@@ -1481,7 +1521,7 @@ def seedance_start_video_task(prompt: str, aspect: str, seconds: object, model: 
             "watermark": False,
             "web_search": False,
             "return_last_frame": bool(return_last_frame),
-            "seed": -1,
+            "seed": clamp_int(seed, -1, -1, 2147483647),
         },
     }
     data = seedance_request_json("/v1/videos/generations", key, payload, method="POST", timeout=120)
@@ -1496,9 +1536,9 @@ def seedance_public_video_result(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def seedance_generate_video_clip(prompt: str, aspect: str, seconds: object, model: str, key: str,
-                                 on_progress=None) -> dict[str, Any]:
+                                 on_progress=None, seed: object = None) -> dict[str, Any]:
     model_id = model or DEFAULT_SEEDANCE_VIDEO_MODEL
-    task_id = seedance_start_video_task(prompt, aspect, seconds, model_id, key)
+    task_id = seedance_start_video_task(prompt, aspect, seconds, model_id, key, seed=seed)
     data = seedance_poll_result(task_id, key, on_progress=on_progress)
     remote_url = next((url for url in seedance_result_urls(data) if url.startswith(("http://", "https://"))), "")
     if not remote_url:
@@ -1525,11 +1565,11 @@ def seedance_video_segment_lengths(seconds: object) -> list[int]:
 
 
 def seedance_generate_video(prompt: str, aspect: str, seconds: object, model: str, key: str,
-                            on_progress=None) -> dict[str, Any]:
+                            on_progress=None, seed: object = None) -> dict[str, Any]:
     segment_lengths = seedance_video_segment_lengths(seconds)
     if len(segment_lengths) == 1:
         return seedance_public_video_result(
-            seedance_generate_video_clip(prompt, aspect, segment_lengths[0], model, key, on_progress)
+            seedance_generate_video_clip(prompt, aspect, segment_lengths[0], model, key, on_progress, seed=seed)
         )
 
     clips: list[dict[str, Any]] = []
@@ -1546,6 +1586,7 @@ def seedance_generate_video(prompt: str, aspect: str, seconds: object, model: st
             model,
             key,
             on_progress=segment_progress,
+            seed=seed,
         ))
 
     paths = [Path(str(clip.get("mp4Path") or "")) for clip in clips if clip.get("mp4Path")]
@@ -1939,7 +1980,9 @@ def atlas_video_segment_lengths(seconds: object, model_id: str = "") -> list[int
 
 
 def atlas_generate_video_clip(prompt: str, aspect: str, seconds: object, model: str, key: str,
-                              start_image: object = "", start_image_name: object = "", on_progress=None) -> dict[str, Any]:
+                              start_image: object = "", start_image_name: object = "", on_progress=None,
+                              negative_prompt: str = "", seed: object = None,
+                              seed_pinned: bool = False) -> dict[str, Any]:
     has_start_image = isinstance(start_image, str) and bool(start_image.strip())
     model_id = atlas_video_model_id(model, has_start_image)
     payload: dict[str, Any] = {
@@ -1947,13 +1990,17 @@ def atlas_generate_video_clip(prompt: str, aspect: str, seconds: object, model: 
         "prompt": prompt,
     }
     payload["duration"] = atlas_video_segment_lengths(seconds, model_id)[0]
+    clip_seed = clamp_int(seed, atlas_wan27_seed(), -1, 2147483647)
+    # A seed stays pinned when the caller asked for it (client-supplied or shared
+    # across segments) or when the env default pins one.
+    pinned = (seed_pinned and clip_seed >= 0) or (seed is None and atlas_wan27_seed() >= 0)
     if atlas_is_wan27_model(model_id):
         payload.update({
-            "negative_prompt": atlas_wan27_negative_prompt(),
+            "negative_prompt": (str(negative_prompt or "").strip() or atlas_wan27_negative_prompt())[:500],
             "resolution": atlas_wan27_resolution(),
             "ratio": atlas_wan27_ratio(aspect),
             "prompt_extend": DEFAULT_ATLAS_WAN27_PROMPT_EXTEND,
-            "seed": atlas_wan27_seed(),
+            "seed": clip_seed,
         })
         audio = str(DEFAULT_ATLAS_WAN27_AUDIO or "").strip()
         if audio:
@@ -1969,7 +2016,7 @@ def atlas_generate_video_clip(prompt: str, aspect: str, seconds: object, model: 
     # Only Wan 2.7 gets moderation retries: its payload carries the knobs
     # (prompt_extend, seed) that give a resubmission a real chance of passing.
     retries = ATLAS_MODERATION_RETRIES if atlas_is_wan27_model(model_id) else 0
-    if retries and atlas_wan27_seed() >= 0:
+    if retries and pinned:
         retries = 1  # pinned seed stays pinned; only the prompt_extend toggle can change the outcome
     attempts = 1 + retries
     result: dict[str, Any] = {}
@@ -1979,7 +2026,7 @@ def atlas_generate_video_clip(prompt: str, aspect: str, seconds: object, model: 
             # what usually introduces the IP-adjacent wording that trips it —
             # retry without the extension, on a fresh seed (unless one is pinned).
             payload["prompt_extend"] = False
-            if atlas_wan27_seed() < 0:
+            if not pinned:
                 payload["seed"] = random.randint(0, 2147483647)
         try:
             started = atlas_request_json("/model/generateVideo", key, payload, method="POST", timeout=120)
@@ -2032,30 +2079,93 @@ def atlas_generate_video_clip(prompt: str, aspect: str, seconds: object, model: 
 
 
 def atlas_generate_video_with_model(prompt: str, aspect: str, seconds: object, model_id: str, key: str,
-                                    start_image: object = "", start_image_name: object = "", on_progress=None) -> dict[str, Any]:
+                                    start_image: object = "", start_image_name: object = "", on_progress=None,
+                                    negative_prompt: str = "", seed: object = None) -> dict[str, Any]:
     segment_lengths = atlas_video_segment_lengths(seconds, model_id)
+    user_seed = clamp_int(seed, -1, -1, 2147483647)
+    seed_pinned = user_seed >= 0
     if len(segment_lengths) == 1:
         return atlas_public_video_result(
-            atlas_generate_video_clip(prompt, aspect, segment_lengths[0], model_id, key, start_image, start_image_name, on_progress)
+            atlas_generate_video_clip(prompt, aspect, segment_lengths[0], model_id, key, start_image, start_image_name,
+                                      on_progress, negative_prompt=negative_prompt,
+                                      seed=user_seed if seed_pinned else None, seed_pinned=seed_pinned)
         )
 
+    # One seed for every segment keeps grain, palette, and style consistent across
+    # the whole clip; a client-supplied or env-pinned seed also stays pinned
+    # through moderation retries.
+    env_seed = atlas_wan27_seed()
+    shared_seed = user_seed if seed_pinned else (
+        env_seed if env_seed >= 0 else random.randint(0, 2147483647)
+    )
+    seed_pinned = seed_pinned or env_seed >= 0
+    # Chained continuations must stay in the same model family: flip only the
+    # text-to-video suffix instead of adopting the configured i2v model (which
+    # may be a different family with other duration caps and no seed/negative
+    # support).
+    chain_model_id = (
+        f"{model_id.rsplit('/', 1)[0]}/image-to-video"
+        if model_id.endswith("/text-to-video") else model_id
+    )
     clips: list[dict[str, Any]] = []
     total = len(segment_lengths)
+    prev_path: Path | None = None
     for index, segment in enumerate(segment_lengths, start=1):
         def segment_progress(status: str, idx=index, total_segments=total) -> None:
             if on_progress:
                 on_progress(f"segment {idx}/{total_segments}: {status}")
 
-        clips.append(atlas_generate_video_clip(
-            segment_prompt(prompt, index, total),
-            aspect,
-            segment,
-            model_id,
-            key,
-            start_image if index == 1 else "",
-            start_image_name if index == 1 else "",
-            on_progress=segment_progress,
-        ))
+        # Chain segments: each one starts from the previous segment's last frame
+        # (image-to-video), so the motion carries across the seam instead of the
+        # scene re-establishing itself from text alone.
+        seg_image: object = start_image if index == 1 else ""
+        seg_image_name: object = start_image_name if index == 1 else ""
+        chained = False
+        if index > 1 and prev_path is not None:
+            segment_progress("extracting last frame for continuity")
+            carried = extract_last_frame_to_data_url(prev_path)
+            if carried:
+                seg_image = carried
+                seg_image_name = f"segment_{index - 1}_last_frame.png"
+                chained = True
+
+        try:
+            clip = atlas_generate_video_clip(
+                segment_prompt(prompt, index, total, chained=chained),
+                aspect,
+                segment,
+                chain_model_id if chained else model_id,
+                key,
+                seg_image,
+                seg_image_name,
+                on_progress=segment_progress,
+                negative_prompt=negative_prompt,
+                seed=shared_seed,
+                seed_pinned=seed_pinned,
+            )
+        except Exception:  # noqa: BLE001
+            if not chained:
+                raise
+            # The carried frame added a new failure surface (frame upload,
+            # input-image moderation). Don't let it sink segments that already
+            # rendered — retry this segment unchained, like before chaining.
+            segment_progress("chained segment failed; retrying without the carried frame")
+            clip = atlas_generate_video_clip(
+                segment_prompt(prompt, index, total),
+                aspect,
+                segment,
+                model_id,
+                key,
+                "",
+                "",
+                on_progress=segment_progress,
+                negative_prompt=negative_prompt,
+                seed=shared_seed,
+                seed_pinned=seed_pinned,
+            )
+        clips.append(clip)
+        clip_path = str(clip.get("mp4Path") or "")
+        prev_path = Path(clip_path) if clip_path else None
 
     paths = [Path(str(clip.get("mp4Path") or "")) for clip in clips if clip.get("mp4Path")]
     combined_url = concat_mp4_paths_to_webm(paths)
@@ -2076,7 +2186,8 @@ def atlas_generate_video_with_model(prompt: str, aspect: str, seconds: object, m
 
 
 def atlas_generate_video(prompt: str, aspect: str, seconds: object, model: str, key: str,
-                         start_image: object = "", start_image_name: object = "", on_progress=None) -> dict[str, Any]:
+                         start_image: object = "", start_image_name: object = "", on_progress=None,
+                         negative_prompt: str = "", seed: object = None) -> dict[str, Any]:
     has_start_image = isinstance(start_image, str) and bool(start_image.strip())
     model_id = atlas_video_model_id(model, has_start_image)
     return atlas_generate_video_with_model(
@@ -2084,6 +2195,8 @@ def atlas_generate_video(prompt: str, aspect: str, seconds: object, model: str, 
         start_image=start_image,
         start_image_name=start_image_name,
         on_progress=on_progress,
+        negative_prompt=negative_prompt,
+        seed=seed,
     )
 
 
@@ -2384,16 +2497,18 @@ def modelslab_public_video_result(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def modelslab_generate_video_clip(prompt: str, aspect: str, seconds: object, model: str, key: str,
-                                  on_progress=None) -> dict[str, Any]:
+                                  on_progress=None, negative_prompt: str = "", seed: object = None) -> dict[str, Any]:
     width, height = ASPECT_TO_MODELSLAB_VIDEO_SIZE.get(aspect, (512, 512))
     duration = clamp_int(seconds, 2, 1, 5)
     fps = 16
     frames = max(16, min(25, duration * fps))
+    user_seed = clamp_int(seed, -1, -1, 2147483647)
     payload = {
         "key": key,
         "model_id": model or DEFAULT_MODELSLAB_VIDEO_MODEL,
         "prompt": prompt,
-        "negative_prompt": DEFAULT_NEGATIVE_VIDEO,
+        "negative_prompt": str(negative_prompt or "").strip() or DEFAULT_NEGATIVE_VIDEO,
+        "seed": user_seed if user_seed >= 0 else None,
         "height": height,
         "width": width,
         "num_frames": frames,
@@ -2442,11 +2557,12 @@ def modelslab_generate_video_clip(prompt: str, aspect: str, seconds: object, mod
 
 
 def modelslab_generate_video(prompt: str, aspect: str, seconds: object, model: str, key: str,
-                             on_progress=None) -> dict[str, Any]:
+                             on_progress=None, negative_prompt: str = "", seed: object = None) -> dict[str, Any]:
     duration = clamp_int(seconds, 2, 1, MODELSLAB_MAX_STITCHED_SECONDS)
     if duration <= 5:
         return modelslab_public_video_result(
-            modelslab_generate_video_clip(prompt, aspect, duration, model, key, on_progress)
+            modelslab_generate_video_clip(prompt, aspect, duration, model, key, on_progress,
+                                          negative_prompt=negative_prompt, seed=seed)
         )
 
     remaining = duration
@@ -2470,6 +2586,8 @@ def modelslab_generate_video(prompt: str, aspect: str, seconds: object, model: s
             model,
             key,
             on_progress=segment_progress,
+            negative_prompt=negative_prompt,
+            seed=seed,
         ))
 
     paths = [Path(str(clip.get("mp4Path") or "")) for clip in clips if clip.get("mp4Path")]
@@ -2720,6 +2838,8 @@ def run_video_job(job_id: str, payload: dict[str, Any]) -> None:
     prompt = str(payload.get("prompt", "")).strip()
     model = str(payload.get("model") or "wan22_14b")
     aspect = str(payload.get("aspect") or "wide")
+    negative_prompt = str(payload.get("negativePrompt") or "").strip()
+    user_seed = payload.get("seed")
     base_w, base_h = ASPECT_TO_SIZE.get(aspect, (1280, 720))
     settings = load_settings()
     try:
@@ -2763,6 +2883,8 @@ def run_video_job(job_id: str, payload: dict[str, Any]) -> None:
             result = modelslab_generate_video(
                 prompt, aspect, payload.get("seconds"), modelslab_model, key,
                 on_progress=on_modelslab_progress,
+                negative_prompt=negative_prompt,
+                seed=user_seed,
             )
             update_job(job_id, status="done", results=[result],
                        meta={"engine": "modelslab", "modelTitle": model_title, "model": modelslab_model,
@@ -2793,6 +2915,7 @@ def run_video_job(job_id: str, payload: dict[str, Any]) -> None:
             result = seedance_generate_video(
                 prompt, aspect, payload.get("seconds"), seedance_model, key,
                 on_progress=on_seedance_progress,
+                seed=user_seed,
             )
             actual_seedance_model = str(result.get("model") or seedance_model)
             update_job(job_id, status="done", results=[result],
@@ -2820,6 +2943,8 @@ def run_video_job(job_id: str, payload: dict[str, Any]) -> None:
                 start_image=payload.get("startImage") or "",
                 start_image_name=payload.get("startImageName") or "",
                 on_progress=on_atlas_progress,
+                negative_prompt=negative_prompt,
+                seed=user_seed,
             )
             actual_atlas_model = str(result.get("model") or atlas_model)
             done_meta = {"engine": "atlas", "modelTitle": "Atlas Video", "model": actual_atlas_model,
@@ -2935,30 +3060,69 @@ out.close()
 inp.close()
 """
 
+# Stitch clips into one VP9 webm, crossfading each seam: the last N frames of a
+# clip are alpha-blended with the first N frames of the next one, so segment
+# boundaries dissolve into each other instead of hard-cutting. With last-frame
+# chaining (segment N+1 starts on segment N's final frame) the fade also swallows
+# the duplicated frame. Overlap 0 = the old hard-cut concat.
 _CONCAT_WEBM_SRC = r"""
 import sys, av
-dst, *srcs = sys.argv[1:]
+import numpy as np
+overlap_seconds = max(0.0, float(sys.argv[1]))
+dst, *srcs = sys.argv[2:]
 if not srcs:
     raise SystemExit(2)
 out = None
 ovs = None
+overlap_frames = 0
+tail = []  # decoded-but-unencoded last frames of the previous clip (rgb24 arrays)
+
+
+def encode_rgb(arr):
+    frame = av.VideoFrame.from_ndarray(arr, format='rgb24')
+    frame = frame.reformat(format='yuv420p')
+    frame.pts = None
+    for pkt in ovs.encode(frame):
+        out.mux(pkt)
+
+
 try:
-    for src in srcs:
+    last_index = len(srcs) - 1
+    for src_index, src in enumerate(srcs):
         inp = av.open(src)
         ivs = inp.streams.video[0]
         if out is None:
             out = av.open(dst, 'w')
-            ovs = out.add_stream('libvpx-vp9', rate=ivs.average_rate or 16)
+            rate = ivs.average_rate or 16
+            ovs = out.add_stream('libvpx-vp9', rate=rate)
             ovs.width = ivs.width
             ovs.height = ivs.height
             ovs.pix_fmt = 'yuv420p'
             ovs.options = {'crf': '34', 'b:v': '0', 'deadline': 'realtime', 'cpu-used': '8', 'row-mt': '1'}
+            overlap_frames = max(0, int(round(float(rate) * overlap_seconds)))
+        prev_tail = tail
+        tail = []
+        blended = 0
+        # The final clip's tail plays as-is; earlier clips hold theirs back to blend.
+        hold_back = overlap_frames if src_index < last_index else 0
         for frame in inp.decode(ivs):
-            frame = frame.reformat(width=ovs.width, height=ovs.height, format='yuv420p')
-            frame.pts = None
-            for pkt in ovs.encode(frame):
-                out.mux(pkt)
+            arr = frame.reformat(width=ovs.width, height=ovs.height, format='rgb24').to_ndarray()
+            if blended < len(prev_tail):
+                alpha = (blended + 1.0) / (len(prev_tail) + 1.0)
+                mix = prev_tail[blended].astype(np.float32) * (1.0 - alpha) + arr.astype(np.float32) * alpha
+                arr = np.clip(mix + 0.5, 0, 255).astype(np.uint8)
+                blended += 1
+                encode_rgb(arr)
+                continue
+            tail.append(arr)
+            if len(tail) > hold_back:
+                encode_rgb(tail.pop(0))
+        # Clip shorter than the fade window: emit the unconsumed previous tail.
+        for arr in prev_tail[blended:]:
+            encode_rgb(arr)
         inp.close()
+    for arr in tail:
+        encode_rgb(arr)
     for pkt in ovs.encode():
         out.mux(pkt)
 finally:
@@ -3028,6 +3192,48 @@ def ffmpeg_video_size(ffmpeg: str, src_path: Path) -> tuple[int, int] | None:
     return None
 
 
+def ffmpeg_video_duration(ffmpeg: str, src_path: Path) -> float | None:
+    try:
+        result = subprocess.run(
+            [ffmpeg, "-hide_banner", "-i", str(src_path)],
+            capture_output=True, text=True, timeout=30,
+        )
+    except Exception:
+        return None
+    output = f"{result.stdout}\n{result.stderr}"
+    match = re.search(r"Duration:\s*(\d+):(\d\d):(\d\d(?:\.\d+)?)", output)
+    if not match:
+        return None
+    hours, minutes, secs = match.groups()
+    duration = int(hours) * 3600 + int(minutes) * 60 + float(secs)
+    return duration if duration > 0 else None
+
+
+def ffmpeg_xfade_filter(ffmpeg: str, paths: list[Path], normalize: list[str]) -> str | None:
+    """Chained xfade filter graph crossfading every seam, or None when clip
+    durations can't be probed or a clip is too short for the fade window."""
+    fade = STITCH_OVERLAP_SECONDS
+    if fade <= 0 or len(paths) < 2:
+        return None
+    durations: list[float] = []
+    for path in paths:
+        duration = ffmpeg_video_duration(ffmpeg, path)
+        if not duration or duration <= fade * 2:
+            return None
+        durations.append(duration)
+    filters = list(normalize)
+    offset = 0.0
+    current = "[v0]"
+    for index in range(1, len(paths)):
+        offset += durations[index - 1] - fade
+        label = "[v]" if index == len(paths) - 1 else f"[x{index}]"
+        filters.append(
+            f"{current}[v{index}]xfade=transition=fade:duration={fade:.3f}:offset={offset:.3f}{label}"
+        )
+        current = label
+    return ";".join(filters)
+
+
 def concat_mp4_paths_with_ffmpeg(src_paths: list[Path], ext: str,
                                  codec_args: list[str], timeout: float = 900) -> str | None:
     paths = [p for p in src_paths if p.exists() and p.is_file()]
@@ -3040,7 +3246,7 @@ def concat_mp4_paths_with_ffmpeg(src_paths: list[Path], ext: str,
     name = f"video_{int(now())}_{uuid.uuid4().hex[:8]}{safe_ext}"
     out_path = OUTPUTS_DIR / name
     first_size = ffmpeg_video_size(ffmpeg, paths[0])
-    filters: list[str] = []
+    normalize: list[str] = []
     labels: list[str] = []
     for index, _ in enumerate(paths):
         label = f"v{index}"
@@ -3052,42 +3258,53 @@ def concat_mp4_paths_with_ffmpeg(src_paths: list[Path], ext: str,
                 f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
                 f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,{chain}"
             )
-        filters.append(f"[{index}:v:0]{chain}[{label}]")
-    filter_complex = ";".join(filters + [f"{''.join(labels)}concat=n={len(paths)}:v=1:a=0[v]"])
+        normalize.append(f"[{index}:v:0]{chain}[{label}]")
+    concat_graph = ";".join(normalize + [f"{''.join(labels)}concat=n={len(paths)}:v=1:a=0[v]"])
+    # Crossfade the seams when clip durations can be probed; hard-cut concat is
+    # the fallback (and the xfade attempt's fallback if it errors).
+    xfade_graph = ffmpeg_xfade_filter(ffmpeg, paths, normalize)
     input_args = [arg for path in paths for arg in ("-i", str(path))]
-    try:
-        result = subprocess.run(
-            [
-                ffmpeg,
-                "-y",
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                *input_args,
-                "-filter_complex",
-                filter_complex,
-                "-map",
-                "[v]",
-                "-an",
-                *codec_args,
-                str(out_path),
-            ],
-            capture_output=True,
-            timeout=timeout,
-        )
-        if result.returncode != 0 or not out_path.exists() or out_path.stat().st_size == 0:
+
+    def run_graph(filter_complex: str) -> str | None:
+        try:
+            result = subprocess.run(
+                [
+                    ffmpeg,
+                    "-y",
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    *input_args,
+                    "-filter_complex",
+                    filter_complex,
+                    "-map",
+                    "[v]",
+                    "-an",
+                    *codec_args,
+                    str(out_path),
+                ],
+                capture_output=True,
+                timeout=timeout,
+            )
+            if result.returncode != 0 or not out_path.exists() or out_path.stat().st_size == 0:
+                try:
+                    out_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                return None
+            return output_url(name)
+        except Exception:
             try:
                 out_path.unlink(missing_ok=True)
             except Exception:
                 pass
             return None
-        return output_url(name)
-    except Exception:
-        try:
-            out_path.unlink(missing_ok=True)
-        except Exception:
-            pass
-        return None
+
+    if xfade_graph:
+        url = run_graph(xfade_graph)
+        if url:
+            return url
+    return run_graph(concat_graph)
 
 
 def concat_mp4_paths_to_webm(src_paths: list[Path]) -> str | None:
@@ -3104,7 +3321,8 @@ def concat_mp4_paths_to_webm(src_paths: list[Path]) -> str | None:
         out_path = OUTPUTS_DIR / name
         try:
             result = subprocess.run(
-                [COMFY_PYTHON, "-c", _CONCAT_WEBM_SRC, str(out_path), *[str(p) for p in paths]],
+                [COMFY_PYTHON, "-c", _CONCAT_WEBM_SRC, str(STITCH_OVERLAP_SECONDS), str(out_path),
+                 *[str(p) for p in paths]],
                 capture_output=True, timeout=900,
             )
             if result.returncode == 0 and out_path.exists() and out_path.stat().st_size > 0:
@@ -3196,6 +3414,30 @@ def fetch_comfy_image_to_input(entry: dict[str, Any]) -> str:
         return f"imagineai/{name}"
     except Exception:
         return ""
+
+
+def extract_last_frame_to_data_url(mp4_path: Path) -> str:
+    """The last frame of a clip as a PNG data URL, so a cloud provider's next
+    segment can start from it (image-to-video chaining). "" when unavailable."""
+    if not Path(COMFY_PYTHON).exists() or not mp4_path.exists():
+        return ""
+    ensure_dirs()
+    dst = OUTPUTS_DIR / f".lastframe_{int(now())}_{uuid.uuid4().hex[:8]}.png"
+    try:
+        result = subprocess.run(
+            [COMFY_PYTHON, "-c", _LAST_FRAME_SRC, str(mp4_path), str(dst)],
+            capture_output=True, timeout=120,
+        )
+        if result.returncode != 0 or not dst.exists() or dst.stat().st_size == 0:
+            return ""
+        return image_bytes_to_data_url(dst.read_bytes())
+    except Exception:
+        return ""
+    finally:
+        try:
+            dst.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 def extract_last_frame_to_comfy_input(mp4_path: Path) -> str:
