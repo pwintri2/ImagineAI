@@ -14,6 +14,7 @@ const defaultPrefs = {
   videoSeconds: 2,
   videoNegativePrompt: '',
   videoSeed: '',
+  videoSoundtrack: '',
 };
 
 const state = {
@@ -41,6 +42,12 @@ const state = {
     seedanceConfigured: false,
     seedanceProvider: '',
     seedanceVideoModel: '',
+    veoVideoModel: '',
+    soraConfigured: false,
+    soraProvider: '',
+    soraVideoModel: '',
+    elevenlabsConfigured: false,
+    elevenlabsProvider: '',
     comfyUrl: '',
   },
   // user preferences (persisted)

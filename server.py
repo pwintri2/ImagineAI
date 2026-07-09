@@ -43,7 +43,7 @@ SECRETS_FILE = DATA_DIR / "secrets.json"
 SETTINGS_FILE = DATA_DIR / "settings.json"
 
 DEFAULT_COMFY_URL = os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188").rstrip("/")
-DEFAULT_GEMINI_MODEL = os.environ.get("GEMINI_IMAGE_MODEL", "gemini-2.5-flash-image")
+DEFAULT_GEMINI_MODEL = os.environ.get("GEMINI_IMAGE_MODEL", "gemini-3.1-flash-image")
 GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
 DEFAULT_XAI_IMAGE_MODEL = os.environ.get("XAI_IMAGE_MODEL", "grok-imagine-image-quality")
 DEFAULT_XAI_VIDEO_MODEL = os.environ.get("XAI_VIDEO_MODEL", "grok-imagine-video")
@@ -77,6 +77,15 @@ MODELSLAB_BASE = os.environ.get("MODELSLAB_BASE_URL", "https://modelslab.com").r
 DEFAULT_SEEDANCE_VIDEO_MODEL = os.environ.get("SEEDANCE_VIDEO_MODEL", os.environ.get("SEEDANCE2_VIDEO_MODEL", "seedance-2-0"))
 DEFAULT_SEEDANCE_RESOLUTION = os.environ.get("SEEDANCE_RESOLUTION", os.environ.get("SEEDANCE2_RESOLUTION", "720p"))
 SEEDANCE_BASE = os.environ.get("SEEDANCE_BASE_URL", os.environ.get("SEEDANCE2_BASE_URL", "https://api.seedance2.ai")).rstrip("/")
+# Veo video runs on the same Gemini API key the image side already uses.
+GEMINI_API_BASE = os.environ.get("GEMINI_API_BASE_URL", "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
+DEFAULT_VEO_VIDEO_MODEL = os.environ.get("VEO_VIDEO_MODEL", "veo-3.1-generate-preview")
+DEFAULT_VEO_RESOLUTION = os.environ.get("VEO_RESOLUTION", "720p")
+OPENAI_BASE = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+DEFAULT_SORA_VIDEO_MODEL = os.environ.get("SORA_VIDEO_MODEL", "sora-2")
+ELEVENLABS_BASE = os.environ.get("ELEVENLABS_BASE_URL", "https://api.elevenlabs.io/v1").rstrip("/")
+# Optional override; when empty the ElevenLabs server-side default model is used.
+ELEVENLABS_MUSIC_MODEL = os.environ.get("ELEVENLABS_MUSIC_MODEL", "").strip()
 
 # ComfyUI's Python (has PyAV) — used to transcode H.264 mp4 -> VP9 webm so the
 # Linux webkit2gtk webview, which usually lacks an H.264 decoder, can play video
@@ -98,6 +107,15 @@ SEEDANCE_STILL_SECONDS = 4
 ATLAS_MAX_SECONDS_PER_REQUEST = 10
 ATLAS_WAN27_MAX_SECONDS_PER_REQUEST = 15
 ATLAS_MAX_STITCHED_SECONDS = 60
+VEO_MAX_SECONDS_PER_REQUEST = 8
+VEO_MAX_STITCHED_SECONDS = 60
+VEO_VIDEO_TIMEOUT = float(os.environ.get("IMAGINEAI_VEO_VIDEO_TIMEOUT", "1200"))
+SORA_MAX_TOTAL_SECONDS = 60  # native extensions allow up to 120s; UI caps at 60
+SORA_VIDEO_TIMEOUT = float(os.environ.get("IMAGINEAI_SORA_VIDEO_TIMEOUT", "1800"))
+ELEVENLABS_TIMEOUT = float(os.environ.get("IMAGINEAI_ELEVENLABS_TIMEOUT", "600"))
+# Director mode: one long film assembled scene by scene across engines.
+DIRECTOR_MAX_SECONDS = int(os.environ.get("IMAGINEAI_DIRECTOR_MAX_SECONDS", "180"))
+DIRECTOR_PLANNER_MODEL = os.environ.get("IMAGINEAI_DIRECTOR_PLANNER_MODEL", "gemini-3.5-flash")
 ATLAS_IMAGE_TIMEOUT = float(os.environ.get("IMAGINEAI_ATLAS_IMAGE_TIMEOUT", "600"))
 ATLAS_VIDEO_TIMEOUT = float(os.environ.get("IMAGINEAI_ATLAS_VIDEO_TIMEOUT", "1200"))
 # Wan's output moderation (copyright/IP/sensitive-content) is stochastic and often
@@ -188,6 +206,8 @@ SEEDANCE_SECRET_PROVIDERS = (
     "seedance2.ai",
     "seedance-2-0",
 )
+SORA_SECRET_PROVIDERS = ("sora", "openai", "open-ai", "sora-2", "sora2")
+ELEVENLABS_SECRET_PROVIDERS = ("elevenlabs", "eleven-labs", "eleven", "11labs", "elevenlabs-api")
 MODELSLAB_DIRECT_VIDEO_MODELS = {
     "wan2.6-t2v": DEFAULT_MODELSLAB_WAN26_VIDEO_MODEL,
     "wan26-t2v": DEFAULT_MODELSLAB_WAN26_VIDEO_MODEL,
@@ -310,6 +330,8 @@ def load_settings() -> dict[str, Any]:
         "modelslabImageModel": DEFAULT_MODELSLAB_IMAGE_MODEL,
         "modelslabVideoModel": DEFAULT_MODELSLAB_VIDEO_MODEL,
         "seedanceVideoModel": DEFAULT_SEEDANCE_VIDEO_MODEL,
+        "veoVideoModel": DEFAULT_VEO_VIDEO_MODEL,
+        "soraVideoModel": DEFAULT_SORA_VIDEO_MODEL,
         "defaultImageEngine": "local",
     }
     allowed = set(defaults)
@@ -334,6 +356,15 @@ def load_settings() -> dict[str, Any]:
     }
     if str(defaults.get("atlasVideoModel") or "").strip().lower() in legacy_atlas_video_models:
         defaults["atlasVideoModel"] = DEFAULT_ATLAS_VIDEO_MODEL
+    # Google shut the -preview image ids down (June 2026); map any stored one to
+    # the GA successor so saved settings keep generating.
+    legacy_gemini_image_models = {
+        "gemini-3.1-flash-image-preview",
+        "gemini-3-pro-image-preview",
+        "gemini-2.0-flash-preview-image-generation",
+    }
+    if str(defaults.get("geminiModel") or "").strip().lower() in legacy_gemini_image_models:
+        defaults["geminiModel"] = DEFAULT_GEMINI_MODEL
     return defaults
 
 
@@ -349,7 +380,8 @@ def save_settings(patch: dict[str, Any]) -> dict[str, Any]:
     current = load_settings()
     for key in ("comfyUrl", "geminiModel", "xaiImageModel", "xaiVideoModel", "atlasImageModel", "atlasImageEditModel",
                 "atlasVideoModel", "stabilityImageModel",
-                "modelslabImageModel", "modelslabVideoModel", "seedanceVideoModel", "defaultImageEngine"):
+                "modelslabImageModel", "modelslabVideoModel", "seedanceVideoModel",
+                "veoVideoModel", "soraVideoModel", "defaultImageEngine"):
         if key in patch and isinstance(patch[key], str) and patch[key].strip():
             value = patch[key].strip()
             if key == "comfyUrl":
@@ -462,6 +494,28 @@ def seedance_key() -> tuple[str, str]:
             return os.environ.get(env_key, ""), env_key
     secrets = load_secrets()
     for provider in SEEDANCE_SECRET_PROVIDERS:
+        if secrets.get(provider):
+            return secrets[provider], provider
+    return "", "env"
+
+
+def sora_key() -> tuple[str, str]:
+    for env_key in ("OPENAI_API_KEY", "SORA_API_KEY"):
+        if os.environ.get(env_key):
+            return os.environ.get(env_key, ""), env_key
+    secrets = load_secrets()
+    for provider in SORA_SECRET_PROVIDERS:
+        if secrets.get(provider):
+            return secrets[provider], provider
+    return "", "env"
+
+
+def elevenlabs_key() -> tuple[str, str]:
+    for env_key in ("ELEVENLABS_API_KEY", "XI_API_KEY"):
+        if os.environ.get(env_key):
+            return os.environ.get(env_key, ""), env_key
+    secrets = load_secrets()
+    for provider in ELEVENLABS_SECRET_PROVIDERS:
         if secrets.get(provider):
             return secrets[provider], provider
     return "", "env"
@@ -2624,6 +2678,1036 @@ def modelslab_generate_video(prompt: str, aspect: str, seconds: object, model: s
 
 
 # --------------------------------------------------------------------------- #
+# Veo (Gemini API) video generation — same GEMINI_API_KEY as the image side
+# --------------------------------------------------------------------------- #
+class VeoHTTPError(RuntimeError):
+    def __init__(self, code: int, message: str):
+        super().__init__(f"Gemini/Veo HTTP {code}: {message}")
+        self.code = code
+        self.message = message
+
+
+def veo_request_json(path: str, key: str, payload: dict[str, Any] | None = None,
+                     method: str = "GET", timeout: float = 120) -> dict[str, Any]:
+    body = None if payload is None else json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(f"{GEMINI_API_BASE}/{path.lstrip('/')}", data=body, method=method)
+    req.add_header("x-goog-api-key", key)
+    if body is not None:
+        req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = ""
+        try:
+            raw = json.loads(exc.read().decode("utf-8"))
+            detail = str(((raw.get("error") or {}).get("message")) or raw)[:500]
+        except Exception:  # noqa: BLE001
+            pass
+        raise VeoHTTPError(exc.code, detail or exc.reason) from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Could not reach the Gemini API: {exc.reason}") from exc
+
+
+def veo_video_segment_lengths(seconds: object) -> list[int]:
+    """Veo renders 4, 6, or 8 s per request — split the target into those."""
+    total = clamp_int(seconds, 8, 4, VEO_MAX_STITCHED_SECONDS)
+    total -= total % 2  # {4,6,8} sums can only hit even totals
+    segments: list[int] = []
+    remaining = total
+    while remaining > 0:
+        if remaining in (4, 6, 8):
+            segment = remaining
+        elif remaining - 8 >= 4:
+            segment = 8
+        else:
+            segment = 6  # e.g. 10 -> 6 + 4
+        segments.append(segment)
+        remaining -= segment
+    return segments
+
+
+def veo_inline_image(data_url: object) -> dict[str, Any]:
+    ext, raw = decode_image_data_url(data_url)
+    mime = "image/jpeg" if ext == "jpg" else f"image/{ext}"
+    return {"inlineData": {"mimeType": mime, "data": base64.b64encode(raw).decode("ascii")}}
+
+
+def veo_download_video(uri: str, key: str) -> tuple[str, Path]:
+    # The docs authenticate the download with the header; urllib can drop custom
+    # headers across redirects, so also append the key as a query parameter.
+    url = uri + ("&" if "?" in uri else "?") + urllib.parse.urlencode({"key": key})
+    req = urllib.request.Request(url)
+    req.add_header("x-goog-api-key", key)
+    with urllib.request.urlopen(req, timeout=600) as response:
+        data = response.read()
+    if not data:
+        raise RuntimeError("Veo returned an empty video file.")
+    ensure_dirs()
+    name = f"veo_video_{int(now())}_{uuid.uuid4().hex[:8]}.mp4"
+    path = OUTPUTS_DIR / name
+    path.write_bytes(data)
+    return output_url(name), path
+
+
+def veo_public_video_result(result: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in result.items() if k != "mp4Path"}
+
+
+def veo_generate_video_clip(prompt: str, aspect: str, duration: int, model: str, key: str,
+                            start_image: object = "", on_progress=None,
+                            negative_prompt: str = "", seed: object = None) -> dict[str, Any]:
+    model_id = (model or DEFAULT_VEO_VIDEO_MODEL).strip()
+    instance: dict[str, Any] = {"prompt": prompt}
+    if isinstance(start_image, str) and start_image.strip():
+        instance["image"] = veo_inline_image(start_image)
+    duration = clamp_int(duration, 8, 4, 8)
+    resolution = str(DEFAULT_VEO_RESOLUTION or "720p").strip().lower() or "720p"
+    if duration != 8:
+        resolution = "720p"  # 1080p/4k require 8 s clips
+    parameters: dict[str, Any] = {
+        "aspectRatio": "9:16" if aspect in ("tall", "portrait") else "16:9",
+        "resolution": resolution,
+        "durationSeconds": str(duration),
+    }
+    extras: dict[str, Any] = {}
+    if str(negative_prompt or "").strip():
+        extras["negativePrompt"] = str(negative_prompt).strip()[:500]
+    user_seed = clamp_int(seed, -1, -1, 2147483647)
+    if user_seed >= 0:
+        extras["seed"] = user_seed
+    start_path = f"models/{urllib.parse.quote(model_id)}:predictLongRunning"
+    try:
+        started = veo_request_json(start_path, key,
+                                   {"instances": [instance], "parameters": {**parameters, **extras}},
+                                   method="POST")
+    except VeoHTTPError as exc:
+        # negativePrompt/seed support drifts between Veo previews — retry bare
+        # before giving up, so the core generation still succeeds.
+        if exc.code == 400 and extras:
+            started = veo_request_json(start_path, key,
+                                       {"instances": [instance], "parameters": parameters},
+                                       method="POST")
+        else:
+            raise
+    operation = str(started.get("name") or "").strip()
+    if not operation:
+        raise RuntimeError("Veo did not return an operation name.")
+
+    deadline = now() + VEO_VIDEO_TIMEOUT
+    poll_failures = 0
+    while now() < deadline:
+        try:
+            status = veo_request_json(operation, key)
+            poll_failures = 0
+        except VeoHTTPError as exc:
+            # One transient poll hiccup must not abandon an accepted (billed)
+            # generation — tolerate a few before surfacing the error.
+            poll_failures += 1
+            if exc.code in (429, 500, 502, 503, 504) and poll_failures <= 5:
+                time.sleep(10)
+                continue
+            raise
+        if status.get("done"):
+            err = status.get("error")
+            if err:
+                raise RuntimeError(f"Veo video failed: {err.get('message') or err}")
+            samples = (((status.get("response") or {}).get("generateVideoResponse") or {})
+                       .get("generatedSamples") or [])
+            video = (samples[0] if samples else {}).get("video") or {}
+            uri = str(video.get("uri") or "").strip()
+            if not uri:
+                raise RuntimeError(
+                    "Veo finished without a video — its safety filter may have removed the "
+                    "result. Reword the prompt (avoid brands and real people) and try again."
+                )
+            mp4_url, mp4_path = veo_download_video(uri, key)
+            webm_url = transcode_mp4_path_to_webm(mp4_path)
+            return {"url": webm_url or mp4_url, "type": "video", "mp4Url": mp4_url,
+                    "mp4Path": str(mp4_path), "model": model_id}
+        if on_progress:
+            on_progress("rendering")
+        time.sleep(8)
+    raise TimeoutError("Veo video generation timed out.")
+
+
+def veo_generate_video(prompt: str, aspect: str, seconds: object, model: str, key: str,
+                       start_image: object = "", on_progress=None,
+                       negative_prompt: str = "", seed: object = None) -> dict[str, Any]:
+    segment_lengths = veo_video_segment_lengths(seconds)
+    if len(segment_lengths) == 1:
+        return veo_public_video_result(
+            veo_generate_video_clip(prompt, aspect, segment_lengths[0], model, key,
+                                    start_image=start_image, on_progress=on_progress,
+                                    negative_prompt=negative_prompt, seed=seed)
+        )
+
+    clips: list[dict[str, Any]] = []
+    total = len(segment_lengths)
+    prev_path: Path | None = None
+    for index, segment in enumerate(segment_lengths, start=1):
+        def segment_progress(status: str, idx=index, total_segments=total) -> None:
+            if on_progress:
+                on_progress(f"segment {idx}/{total_segments}: {status}")
+
+        # Chain segments from the previous segment's last frame (image-to-video),
+        # exactly like the Atlas/Grok flows, so the clip reads as one video.
+        seg_image: object = start_image if index == 1 else ""
+        chained = False
+        if index > 1 and prev_path is not None:
+            segment_progress("extracting last frame for continuity")
+            carried = extract_last_frame_to_data_url(prev_path)
+            if carried:
+                seg_image = carried
+                chained = True
+
+        try:
+            clip = veo_generate_video_clip(
+                segment_prompt(prompt, index, total, chained=chained),
+                aspect, segment, model, key,
+                start_image=seg_image, on_progress=segment_progress,
+                negative_prompt=negative_prompt, seed=seed,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # Retry unchained only for failures the carried frame can cause
+            # (request rejection, safety filter) — a timeout or transport error
+            # after Google accepted the job would just double-bill on retry.
+            refused = ((isinstance(exc, VeoHTTPError) and exc.code == 400)
+                       or (isinstance(exc, RuntimeError) and not isinstance(exc, VeoHTTPError)))
+            if not chained or not refused:
+                raise
+            segment_progress("chained segment failed; retrying without the carried frame")
+            clip = veo_generate_video_clip(
+                segment_prompt(prompt, index, total),
+                aspect, segment, model, key,
+                start_image="", on_progress=segment_progress,
+                negative_prompt=negative_prompt, seed=seed,
+            )
+        clips.append(clip)
+        clip_path = str(clip.get("mp4Path") or "")
+        prev_path = Path(clip_path) if clip_path else None
+
+    paths = [Path(str(clip.get("mp4Path") or "")) for clip in clips if clip.get("mp4Path")]
+    combined = stitch_video_paths(paths)
+    actual_model = clips[0].get("model") or model or DEFAULT_VEO_VIDEO_MODEL
+    if not combined:
+        return segmented_video_result(
+            clips,
+            veo_public_video_result,
+            "Veo generated the video segments, but local stitching is unavailable. Showing the segments instead.",
+            {"model": actual_model},
+        )
+    result = {
+        "url": combined["url"],
+        "type": "video",
+        "model": actual_model,
+        "segments": [veo_public_video_result(clip) for clip in clips],
+    }
+    if combined.get("mp4Url"):
+        result["mp4Url"] = combined["mp4Url"]
+    return result
+
+
+# --------------------------------------------------------------------------- #
+# Sora (OpenAI Videos API) video generation
+# NOTE: OpenAI has deprecated this API — announced shutdown September 24, 2026.
+# --------------------------------------------------------------------------- #
+class SoraHTTPError(RuntimeError):
+    def __init__(self, code: int, message: str):
+        super().__init__(f"OpenAI/Sora HTTP {code}: {message}")
+        self.code = code
+        self.message = message
+
+
+def sora_request_json(path: str, key: str, payload: dict[str, Any] | None = None,
+                      method: str = "GET", timeout: float = 120) -> dict[str, Any]:
+    body = None if payload is None else json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(f"{OPENAI_BASE}/{path.lstrip('/')}", data=body, method=method)
+    req.add_header("Authorization", f"Bearer {key}")
+    if body is not None:
+        req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = ""
+        try:
+            raw = json.loads(exc.read().decode("utf-8"))
+            err = raw.get("error") or {}
+            detail = str(err.get("message") or raw)[:500]
+            code_name = str(err.get("code") or "")
+            if code_name:
+                detail = f"[{code_name}] {detail}"
+        except Exception:  # noqa: BLE001
+            pass
+        raise SoraHTTPError(exc.code, detail or exc.reason) from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Could not reach the OpenAI API: {exc.reason}") from exc
+
+
+def sora_size(aspect: str) -> str:
+    return "720x1280" if aspect in ("tall", "portrait") else "1280x720"
+
+
+def sora_plan_segments(seconds: object) -> tuple[int, list[int]]:
+    """First render (4/8/12 s) plus native extension chunks to reach the target."""
+    total = clamp_int(seconds, 8, 4, SORA_MAX_TOTAL_SECONDS)
+    total -= total % 4  # create + extension durations are multiples of 4
+    first = min(12, total)
+    remaining = total - first
+    chunks: list[int] = []
+    while remaining > 0:
+        for chunk in (20, 16, 12, 8, 4):
+            if chunk <= remaining:
+                chunks.append(chunk)
+                remaining -= chunk
+                break
+    return first, chunks
+
+
+def sora_wait_video(video_id: str, key: str, on_progress=None,
+                    timeout: float = SORA_VIDEO_TIMEOUT) -> dict[str, Any]:
+    deadline = now() + timeout
+    while now() < deadline:
+        video = sora_request_json(f"videos/{urllib.parse.quote(video_id)}", key)
+        status = str(video.get("status") or "").lower()
+        if on_progress:
+            on_progress(status or "running", video.get("progress"))
+        if status == "completed":
+            return video
+        if status == "failed":
+            err = video.get("error") or {}
+            message = str(err.get("message") or "Sora video generation failed.")
+            code_name = str(err.get("code") or "")
+            raise RuntimeError(f"Sora video failed [{code_name}]: {message}" if code_name else message)
+        time.sleep(5)
+    raise TimeoutError("Sora video generation timed out.")
+
+
+def sora_download_video(video_id: str, key: str) -> tuple[str, Path]:
+    req = urllib.request.Request(f"{OPENAI_BASE}/videos/{urllib.parse.quote(video_id)}/content?variant=video")
+    req.add_header("Authorization", f"Bearer {key}")
+    with urllib.request.urlopen(req, timeout=900) as response:
+        data = response.read()
+    if not data:
+        raise RuntimeError("Sora returned an empty video file.")
+    ensure_dirs()
+    name = f"sora_video_{int(now())}_{uuid.uuid4().hex[:8]}.mp4"
+    path = OUTPUTS_DIR / name
+    path.write_bytes(data)
+    return output_url(name), path
+
+
+_PROBE_DURATION_SRC = r"""
+import sys, av
+c = av.open(sys.argv[1])
+print(float(c.duration / av.time_base) if c.duration else 0.0)
+c.close()
+"""
+
+
+def probe_video_duration(path: Path) -> float:
+    """Clip duration in seconds via ComfyUI's PyAV, or 0.0 when unavailable."""
+    if not Path(COMFY_PYTHON).exists() or not path.exists():
+        return 0.0
+    try:
+        result = subprocess.run(
+            [COMFY_PYTHON, "-c", _PROBE_DURATION_SRC, str(path)],
+            capture_output=True, text=True, timeout=60,
+        )
+        if result.returncode == 0:
+            return max(0.0, float(result.stdout.strip()))
+    except Exception:  # noqa: BLE001
+        pass
+    return 0.0
+
+
+def sora_generate_video(prompt: str, aspect: str, seconds: object, model: str, key: str,
+                        on_progress=None) -> dict[str, Any]:
+    model_id = (model or DEFAULT_SORA_VIDEO_MODEL).strip()
+    first, chunks = sora_plan_segments(seconds)
+    total_planned = first + sum(chunks)
+    total_stages = 1 + len(chunks)
+
+    def stage_progress(stage: int):
+        def _progress(status: str, progress: object) -> None:
+            if on_progress:
+                on_progress(f"segment {stage}/{total_stages}: {status}", progress)
+        return _progress
+
+    started = sora_request_json("videos", key, {
+        "prompt": prompt,
+        "model": model_id,
+        "seconds": str(first),
+        "size": sora_size(aspect),
+    }, method="POST")
+    video_id = str(started.get("id") or "").strip()
+    if not video_id:
+        raise RuntimeError("Sora did not return a video id.")
+    sora_wait_video(video_id, key, on_progress=stage_progress(1))
+
+    stage_ids = [video_id]
+    for index, chunk in enumerate(chunks, start=2):
+        extended = sora_request_json("videos/extensions", key, {
+            "video": {"id": stage_ids[-1]},
+            "prompt": segment_prompt(prompt, index, total_stages),
+            "seconds": str(chunk),
+        }, method="POST")
+        next_id = str(extended.get("id") or "").strip()
+        if not next_id:
+            raise RuntimeError("Sora did not return a video id for the extension.")
+        sora_wait_video(next_id, key, on_progress=stage_progress(index))
+        stage_ids.append(next_id)
+
+    mp4_url, mp4_path = sora_download_video(stage_ids[-1], key)
+    duration = probe_video_duration(mp4_path)
+    if len(stage_ids) > 1 and 0.0 < duration < 0.8 * total_planned:
+        # The final download only held the last extension — pull every stage
+        # and stitch them locally like the other providers.
+        if on_progress:
+            on_progress("downloading segments for stitching", None)
+        paths = [mp4_path]
+        for stage_id in reversed(stage_ids[:-1]):
+            _, stage_path = sora_download_video(stage_id, key)
+            paths.insert(0, stage_path)
+        combined = stitch_video_paths(paths)
+        if combined:
+            result = {"url": combined["url"], "type": "video", "model": model_id}
+            if combined.get("mp4Url"):
+                result["mp4Url"] = combined["mp4Url"]
+            return result
+        # Every stage was already generated (and billed) — degrade to the final
+        # stage with a warning instead of discarding paid output.
+        webm_url = transcode_mp4_path_to_webm(mp4_path, timeout=900)
+        return {"url": webm_url or mp4_url, "type": "video", "mp4Url": mp4_url, "model": model_id,
+                "stitchWarning": "Sora generated all segments, but local stitching is unavailable — showing the final segment only."}
+
+    webm_url = transcode_mp4_path_to_webm(mp4_path, timeout=900)
+    result = {"url": webm_url or mp4_url, "type": "video", "mp4Url": mp4_url, "model": model_id}
+    if len(stage_ids) > 1 and duration <= 0.0:
+        result["stitchWarning"] = ("Could not verify the extended video's length locally — "
+                                   "if it looks shorter than requested, install ComfyUI's Python for stitching support.")
+    return result
+
+
+# --------------------------------------------------------------------------- #
+# ElevenLabs soundtrack — generate music/ambience and mix it into a video
+# --------------------------------------------------------------------------- #
+class ElevenLabsHTTPError(RuntimeError):
+    def __init__(self, code: int, message: str):
+        super().__init__(f"ElevenLabs HTTP {code}: {message}")
+        self.code = code
+        self.message = message
+
+
+def elevenlabs_request_bytes(path: str, key: str, payload: dict[str, Any],
+                             timeout: float = ELEVENLABS_TIMEOUT) -> bytes:
+    req = urllib.request.Request(f"{ELEVENLABS_BASE}/{path.lstrip('/')}",
+                                 data=json.dumps(payload).encode("utf-8"), method="POST")
+    req.add_header("xi-api-key", key)
+    req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            return response.read()
+    except urllib.error.HTTPError as exc:
+        detail = ""
+        try:
+            raw = json.loads(exc.read().decode("utf-8"))
+            inner = raw.get("detail")
+            if isinstance(inner, dict):
+                detail = str(inner.get("message") or inner.get("status") or inner)[:400]
+            else:
+                detail = str(inner or raw)[:400]
+        except Exception:  # noqa: BLE001
+            pass
+        raise ElevenLabsHTTPError(exc.code, detail or exc.reason) from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Could not reach the ElevenLabs API: {exc.reason}") from exc
+
+
+def elevenlabs_generate_soundtrack(text: str, seconds: float, key: str) -> Path:
+    """Compose a soundtrack of roughly `seconds` length as an mp3 on disk.
+    Prefers the Music API (exact length, 10 min max); falls back to the sound
+    effects endpoint (30 s max, looped) when Music is plan-gated."""
+    ensure_dirs()
+    path = OUTPUTS_DIR / f".soundtrack_{int(now())}_{uuid.uuid4().hex[:8]}.mp3"
+    length_ms = int(max(3000, min(600000, round(seconds * 1000))))
+    music_payload: dict[str, Any] = {"prompt": text, "music_length_ms": length_ms}
+    if ELEVENLABS_MUSIC_MODEL:
+        music_payload["model_id"] = ELEVENLABS_MUSIC_MODEL
+    try:
+        data = elevenlabs_request_bytes("music?output_format=mp3_44100_128", key, music_payload)
+    except ElevenLabsHTTPError:
+        # Music is gated to paid plans; sound effects work everywhere (<=30s,
+        # loopable) and the muxer tiles the loop to the video length.
+        sfx_payload: dict[str, Any] = {
+            "text": text,
+            "duration_seconds": min(30.0, max(0.5, float(seconds))),
+            "prompt_influence": 0.3,
+        }
+        if seconds > 30:
+            sfx_payload["loop"] = True
+        data = elevenlabs_request_bytes("sound-generation?output_format=mp3_44100_128", key, sfx_payload)
+    if not data:
+        raise RuntimeError("ElevenLabs returned an empty audio file.")
+    path.write_bytes(data)
+    return path
+
+
+# Mix a generated soundtrack into a finished video: the video stream is remuxed
+# untouched (no quality loss), the soundtrack is tiled/trimmed to the video
+# length with a fade-out, and any original audio stays on top of the music bed.
+# argv: video_in audio_in dst
+_MUX_SOUNDTRACK_SRC = r"""
+import sys, av
+import numpy as np
+
+video_in, audio_in, dst = sys.argv[1:4]
+RATE = 48000
+
+
+def decode_audio(path):
+    inp = av.open(path)
+    if not inp.streams.audio:
+        inp.close()
+        return np.zeros((2, 0), dtype=np.float32)
+    resampler = av.AudioResampler(format='fltp', layout='stereo', rate=RATE)
+    chunks = []
+    for frame in inp.decode(inp.streams.audio[0]):
+        for out_frame in resampler.resample(frame):
+            chunks.append(out_frame.to_ndarray().astype(np.float32))
+    for out_frame in resampler.resample(None):
+        chunks.append(out_frame.to_ndarray().astype(np.float32))
+    inp.close()
+    if not chunks:
+        return np.zeros((2, 0), dtype=np.float32)
+    return np.concatenate(chunks, axis=1)
+
+
+probe = av.open(video_in)
+video_seconds = float(probe.duration / av.time_base) if probe.duration else 0.0
+probe.close()
+if video_seconds <= 0:
+    raise SystemExit(3)
+target = int(round(video_seconds * RATE))
+
+music = decode_audio(audio_in)
+if music.shape[1] == 0:
+    raise SystemExit(4)
+while music.shape[1] < target:  # tile a looped/short track to the video length
+    music = np.concatenate([music, music], axis=1)
+music = music[:, :target].copy()
+fade = min(target, RATE)  # 1 s fade-out so the track never cuts off hard
+music[:, -fade:] *= np.linspace(1.0, 0.0, fade, dtype=np.float32)
+
+original = decode_audio(video_in)
+if original.shape[1] > 0:
+    if original.shape[1] < target:
+        original = np.concatenate(
+            [original, np.zeros((2, target - original.shape[1]), dtype=np.float32)], axis=1)
+    mixed = original[:, :target] + music * 0.35  # music bed under the native audio
+else:
+    mixed = music * 0.9
+mixed = np.clip(mixed, -1.0, 1.0)
+
+vin = av.open(video_in)
+ivs = vin.streams.video[0]
+out = av.open(dst, 'w', options={'movflags': '+faststart'})
+ovs = out.add_stream_from_template(ivs)
+aus = out.add_stream('aac', rate=RATE)
+aus.layout = 'stereo'
+aus.bit_rate = 192000
+audio_pos = 0
+AAC_FRAME = 1024
+
+
+def feed_audio(upto_seconds):
+    global audio_pos
+    target_pos = mixed.shape[1] if upto_seconds is None else min(mixed.shape[1], int(upto_seconds * RATE))
+    while audio_pos < target_pos:
+        n = min(AAC_FRAME, mixed.shape[1] - audio_pos)
+        chunk = np.ascontiguousarray(mixed[:, audio_pos:audio_pos + n])
+        frame = av.AudioFrame.from_ndarray(chunk, format='fltp', layout='stereo')
+        frame.sample_rate = RATE
+        frame.pts = audio_pos
+        for pkt in aus.encode(frame):
+            out.mux(pkt)
+        audio_pos += n
+
+
+# Rebase the video timeline to start at 0 so it lines up with the new audio
+# track (source streams do not always start at pts 0).
+ts_offset = None
+for packet in vin.demux(ivs):
+    if packet.dts is None:
+        continue  # remux: EOF flush packets carry no data and cannot be muxed
+    if ts_offset is None:
+        ts_offset = packet.dts
+    packet.dts -= ts_offset
+    if packet.pts is not None:
+        packet.pts -= ts_offset
+    when = float(packet.pts * packet.time_base) if packet.pts is not None else None
+    packet.stream = ovs
+    out.mux(packet)
+    if when is not None:
+        feed_audio(when)
+feed_audio(None)
+for pkt in aus.encode():
+    out.mux(pkt)
+out.close()
+vin.close()
+"""
+
+
+def mux_soundtrack_into_mp4(video_path: Path, audio_path: Path) -> tuple[str, Path] | None:
+    if not Path(COMFY_PYTHON).exists():
+        return None
+    ensure_dirs()
+    name = f"video_{int(now())}_{uuid.uuid4().hex[:8]}.mp4"
+    out_path = OUTPUTS_DIR / name
+    try:
+        result = subprocess.run(
+            [COMFY_PYTHON, "-c", _MUX_SOUNDTRACK_SRC, str(video_path), str(audio_path), str(out_path)],
+            capture_output=True, timeout=900,
+        )
+        if result.returncode == 0 and out_path.exists() and out_path.stat().st_size > 0:
+            return output_url(name), out_path
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        out_path.unlink(missing_ok=True)
+    except Exception:
+        pass
+    return None
+
+
+def local_media_path_from_url(url: object) -> Path | None:
+    """Resolve an /api/local-media?name=... url back to its file in OUTPUTS_DIR."""
+    if not isinstance(url, str) or "name=" not in url:
+        return None
+    try:
+        query = urllib.parse.urlparse(url).query
+        name = urllib.parse.parse_qs(query).get("name", [""])[0]
+    except ValueError:
+        return None
+    if not name:
+        return None
+    path = (OUTPUTS_DIR / name).resolve()
+    if not str(path).startswith(str(OUTPUTS_DIR.resolve())) or not path.is_file():
+        return None
+    return path
+
+
+def apply_soundtrack(result: dict[str, Any], payload: dict[str, Any], on_progress=None) -> dict[str, Any]:
+    """When the job asked for an ElevenLabs soundtrack, compose one matching the
+    finished video's length and mix it in. Failures never sink the video job —
+    they surface as a soundtrackWarning on the otherwise-unchanged result."""
+    text = str(payload.get("soundtrack") or "").strip()
+    if not text or not isinstance(result, dict) or result.get("type") != "video":
+        return result
+    result = dict(result)
+    key, _ = elevenlabs_key()
+    if not key:
+        result["soundtrackWarning"] = "No ElevenLabs API key saved — soundtrack skipped. Add one in Settings as elevenlabs."
+        result.pop("mp4Path", None)
+        return result
+    video_path = Path(str(result.get("mp4Path"))) if result.get("mp4Path") else None
+    if not video_path or not video_path.exists():
+        # Only the mp4 master is a valid mux source; remuxing the VP9 preview
+        # into an ".mp4" would produce a misleading download.
+        video_path = local_media_path_from_url(result.get("mp4Url"))
+    if not video_path:
+        result["soundtrackWarning"] = "Soundtrack skipped: this video has no local mp4 master to mix into."
+        result.pop("mp4Path", None)
+        return result
+    audio_path: Path | None = None
+    try:
+        if on_progress:
+            on_progress("composing soundtrack")
+        seconds = probe_video_duration(video_path) or float(clamp_int(payload.get("seconds"), 8, 1, 600))
+        audio_path = elevenlabs_generate_soundtrack(text, seconds, key)
+        if on_progress:
+            on_progress("mixing soundtrack into the video")
+        muxed = mux_soundtrack_into_mp4(video_path, audio_path)
+        if not muxed:
+            result["soundtrackWarning"] = "The soundtrack was generated but could not be mixed into the video."
+            result.pop("mp4Path", None)
+            return result
+        mp4_url, mp4_path = muxed
+        webm_url = transcode_mp4_path_to_webm(mp4_path, timeout=900)
+        # The pre-soundtrack preview webm is superseded — drop the orphan.
+        old_preview = local_media_path_from_url(result.get("url"))
+        result["url"] = webm_url or mp4_url
+        result["mp4Url"] = mp4_url
+        if webm_url and old_preview is not None and old_preview.suffix == ".webm":
+            try:
+                old_preview.unlink(missing_ok=True)
+            except Exception:
+                pass
+    except Exception as exc:  # noqa: BLE001
+        result["soundtrackWarning"] = f"Soundtrack failed: {exc}"
+    finally:
+        if audio_path is not None:
+            try:
+                audio_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+    result.pop("mp4Path", None)
+    return result
+
+
+# --------------------------------------------------------------------------- #
+# Director — one long film (up to 3 minutes) assembled scene by scene, choosing
+# the engine per scene by content: Wan (local/Atlas) has the most artistic
+# freedom, Grok tolerates a little, Veo is strictly moderated. Scenes chain
+# from each other's last frame and the stitcher crossfades video and audio.
+# --------------------------------------------------------------------------- #
+# Words that push a scene towards the permissive engines. Deliberately broad:
+# a false positive only means the scene renders on Wan instead of Veo.
+DIRECTOR_FREE_WORDS = (
+    "nude", "naked", "naakt", "nsfw", "erotic", "erotisch", "sensual body",
+    "lingerie", "seks", "gore", "bloody", "blood", "bloed", "brutal",
+    "gruesome", "mutilat", "dismember", "corpse", "lijk", "horror kill",
+    "slasher", "torture", "martel",
+)
+DIRECTOR_MILD_WORDS = (
+    "fight", "vecht", "battle", "gevecht", "weapon", "wapen", "gun", "geweer",
+    "sword", "zwaard", "war", "oorlog", "blood-", "smoking", "roken",
+    "alcohol", "drunk", "dronken", "kiss", "kus", "sensual", "sensueel",
+    "occult", "ritual", "ritueel", "demon", "duivel", "horror", "scary",
+    "eng ", "creepy", "griezel",
+)
+
+
+def director_scene_tier(text: object) -> int:
+    """0 = safe (any engine), 1 = mild (Grok and up), 2 = free (Wan only)."""
+    low = f" {str(text or '').lower()} "
+    if any(word in low for word in DIRECTOR_FREE_WORDS):
+        return 2
+    if any(word in low for word in DIRECTOR_MILD_WORDS):
+        return 1
+    return 0
+
+
+# Engine preference per tier — most permissive first for artistic scenes, best
+# quality first for safe ones. Only chain-capable engines take part (Seedance,
+# ModelsLab, and Sora cannot start from a carried frame).
+DIRECTOR_TIER_PREFS = {
+    2: ("local", "atlas", "xai", "veo"),
+    1: ("xai", "atlas", "local", "veo"),
+    0: ("veo", "atlas", "xai", "local"),
+}
+DIRECTOR_SEGMENT_SWEET_SPOT = {"veo": 8, "atlas": 15, "xai": 15, "local": 10}
+
+
+def director_available_engines() -> dict[str, dict[str, Any]]:
+    engines: dict[str, dict[str, Any]] = {}
+    try:
+        models = detect_models()
+        video_models = (models.get("video") or {}) if models.get("reachable") else {}
+    except Exception:  # noqa: BLE001
+        video_models = {}
+    if video_models.get("wan22_ti2v_5b") or video_models.get("wan22_14b"):
+        engines["local"] = {
+            "ti2v": bool(video_models.get("wan22_ti2v_5b")),
+            "wan14b": bool(video_models.get("wan22_14b")),
+        }
+    atlas_value, _ = atlas_key()
+    if atlas_value:
+        engines["atlas"] = {"key": atlas_value}
+    if xai_key():
+        engines["xai"] = {"key": xai_key()}
+    if gemini_key():
+        engines["veo"] = {"key": gemini_key()}
+    return engines
+
+
+def director_pick_engine(tier: int, available: dict[str, dict[str, Any]]) -> str:
+    for engine in DIRECTOR_TIER_PREFS.get(tier, DIRECTOR_TIER_PREFS[0]):
+        if engine in available:
+            return engine
+    raise RuntimeError(
+        "Director mode needs at least one chain-capable video engine: local Wan 2.2 "
+        "(ComfyUI), Atlas, Grok, or a Gemini key for Veo."
+    )
+
+
+def _veo_snap(duration: int) -> int:
+    return 8 if duration >= 8 else (6 if duration >= 6 else 4)
+
+
+def director_segment_seconds(engine: str, remaining: int, caps: dict[str, int] | None = None) -> int:
+    cap = (caps or DIRECTOR_SEGMENT_SWEET_SPOT).get(engine, 10)
+    duration = min(cap, remaining)
+    if engine == "veo":  # Veo accepts only 4, 6, or 8 seconds — snap BEFORE the tail check
+        duration = _veo_snap(duration)
+    # Never leave a sub-4s tail: shorten this segment so the next stays renderable.
+    tail = remaining - duration
+    if 0 < tail < 4:
+        duration = max(4, duration - (4 - tail))
+        if engine == "veo":
+            duration = _veo_snap(duration)
+    return max(1, min(duration, remaining))
+
+
+def director_plan_scenes(prompt: str, scene_count: int, total_seconds: int, key: str) -> list[dict[str, Any]] | None:
+    """Ask Gemini to break the idea into scene prompts with a sensitivity tag.
+    Returns None when no key is set or the plan can't be parsed — the caller
+    then falls back to plain continuation prompts."""
+    if not key:
+        return None
+    instruction = (
+        f"You are a film director planning one continuous {total_seconds}-second AI video.\n"
+        f"Break the following idea into exactly {scene_count} consecutive scenes that flow into "
+        "each other as one uninterrupted story — same characters, wardrobe, setting, lighting, "
+        "colour palette, and camera language throughout.\n\n"
+        f"IDEA:\n{prompt}\n\n"
+        "Respond with ONLY a JSON array. Each element: {\"prompt\": \"<vivid English video-generation "
+        "prompt for this scene, describing motion and camera, continuing seamlessly from the previous "
+        "scene>\", \"sensitivity\": \"safe\" | \"mild\" | \"free\"}.\n"
+        "sensitivity guidance: \"safe\" = family-friendly, no edgy content; \"mild\" = action, combat, "
+        "romance, smoking, mildly dark themes; \"free\" = nudity, gore, or other content strict "
+        "providers refuse."
+    )
+    try:
+        data = veo_request_json(
+            f"models/{urllib.parse.quote(DIRECTOR_PLANNER_MODEL)}:generateContent", key,
+            {"contents": [{"parts": [{"text": instruction}]}],
+             "generationConfig": {"responseMimeType": "application/json"}},
+            method="POST", timeout=120,
+        )
+        text = str(((data.get("candidates") or [{}])[0].get("content") or {})
+                   .get("parts", [{}])[0].get("text") or "")
+        text = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", text.strip())
+        raw = json.loads(text)
+        if isinstance(raw, dict):
+            raw = raw.get("scenes")
+        if not isinstance(raw, list):
+            return None
+        tiers = {"safe": 0, "mild": 1, "free": 2}
+        scenes = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            scene_prompt = str(item.get("prompt") or "").strip()
+            if not scene_prompt:
+                continue
+            scenes.append({
+                "prompt": scene_prompt,
+                "tier": tiers.get(str(item.get("sensitivity") or "").strip().lower(), 0),
+            })
+        return scenes or None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def director_render_local_segment(job_id: str, scene_prompt: str, aspect: str, seconds: int,
+                                  info: dict[str, Any], start_frame_name: str,
+                                  negative_prompt: str, seed: int,
+                                  prev_kind: str) -> tuple[Path, str, str]:
+    width, height = wan_block_dimensions(aspect)
+    use_ti2v = bool(start_frame_name) and info.get("ti2v")
+    kind = "wan22_ti2v_5b" if (use_ti2v or not info.get("wan14b")) else "wan22_14b"
+    data = {
+        "prompt": scene_prompt,
+        "negative_prompt": negative_prompt or DEFAULT_NEGATIVE_VIDEO,
+        "seconds": seconds,
+        "fps": None,
+        "seed": seed,
+        "steps": None,
+        "cfg": None,
+    }
+    # Free VRAM whenever the ComfyUI model changes (14B <-> TI2V 5B) or when a
+    # cloud scene or another job may have loaded something else in between.
+    path, frame_name = run_local_video_block(job_id, kind, data, width, height,
+                                             start_frame_name if use_ti2v else "",
+                                             free_first=(kind != prev_kind), emit_last_frame=True)
+    return path, frame_name, kind
+
+
+def director_generate_video(job_id: str, payload: dict[str, Any], prompt: str, aspect: str,
+                            total_seconds: int, on_progress=None) -> dict[str, Any]:
+    negative_prompt = str(payload.get("negativePrompt") or "").strip()
+    user_seed = clamp_int(payload.get("seed"), -1, -1, 2147483647)
+    shared_seed = user_seed if user_seed >= 0 else random.randint(0, 2147483647)
+    seed_pinned = user_seed >= 0
+    settings = load_settings()
+    available = director_available_engines()
+    if not available:
+        director_pick_engine(0, available)  # raises the explanatory error
+
+    total = clamp_int(total_seconds, 60, 8, DIRECTOR_MAX_SECONDS)
+    estimated_scenes = max(2, round(total / 10))
+    if on_progress:
+        on_progress("planning scenes")
+    scenes = director_plan_scenes(prompt, estimated_scenes, total, gemini_key())
+    base_tier = director_scene_tier(prompt)
+    # A non-Wan-2.7 Atlas model caps segments at 10 s (and its own rounding).
+    caps = dict(DIRECTOR_SEGMENT_SWEET_SPOT)
+    if "atlas" in available and not atlas_is_wan27_model(
+            atlas_video_model_id(str(settings.get("atlasVideoModel") or DEFAULT_ATLAS_VIDEO_MODEL), False)):
+        caps["atlas"] = 10
+
+    chain_hint = (" The provided start image is the exact final frame of the previous "
+                  "scene — continue its motion and camera movement seamlessly.")
+    produced: list[Path] = []
+    local_temp: list[Path] = []
+    temp_frames: list[str] = []   # ComfyUI input frames to clean up
+    single_clip: dict[str, Any] | None = None
+    scene_infos: list[dict[str, Any]] = []
+    carry_url = ""        # last frame as data URL, feeds cloud i2v
+    carry_frame = ""      # clean ComfyUI frame name, feeds local TI2V
+    prev_engine = ""
+    prev_local_kind = ""
+    remaining = total
+    index = 0
+    try:
+        while remaining >= 4:  # sub-4s residues are dropped, not dispatched
+            index += 1
+            if job_cancel_requested(job_id):
+                raise JobCancelled()
+            scene = None
+            if scenes:
+                scene = scenes[min(index - 1, len(scenes) - 1)]
+                if index - 1 >= len(scenes):
+                    # Plan exhausted — keep evolving the finale instead of
+                    # wrapping back to the opening scene.
+                    scene = {"prompt": scene["prompt"] + " Continue the action naturally, evolving "
+                                                         "it further without restarting the scene.",
+                             "tier": scene.get("tier", 0)}
+            if scene:
+                base_text = scene["prompt"]
+                tier = max(base_tier, int(scene.get("tier") or 0), director_scene_tier(base_text))
+            else:
+                base_text = ""  # built per attempt via segment_prompt
+                tier = base_tier
+            engine = director_pick_engine(tier, available)
+            seconds_seg = director_segment_seconds(engine, remaining, caps)
+            if on_progress:
+                tier_label = {0: "safe", 1: "mild", 2: "free"}[tier]
+                on_progress(f"scene {index} · {engine} · {seconds_seg}s · {tier_label}")
+
+            start_image = carry_url or (payload.get("startImage") if index == 1 else "") or ""
+            clip_path: Path | None = None
+            clip: dict[str, Any] | None = None
+            new_carry_frame = ""
+            last_error: Exception | None = None
+            # Try the preferred engine chained, then unchained, then the next
+            # engine in this tier's preference order.
+            for candidate in [e for e in DIRECTOR_TIER_PREFS[tier] if e in available]:
+                if candidate != engine:
+                    seconds_seg = director_segment_seconds(candidate, remaining, caps)
+                attempts = [start_image, ""] if start_image else [""]
+                for attempt_image in attempts:
+                    # The continuity hint must only appear when a frame is attached.
+                    if scene:
+                        scene_text = base_text + (chain_hint if attempt_image else "")
+                    else:
+                        scene_text = segment_prompt(prompt, index, max(index, round(total / 10)),
+                                                    chained=bool(attempt_image))
+                    try:
+                        if candidate == "local":
+                            frame_name = ""
+                            if attempt_image:
+                                # Prefer the clean pre-H.264 frame when the previous
+                                # scene was local; otherwise upload the carried frame.
+                                frame_name = carry_frame or save_start_image_for_comfy(attempt_image)
+                                if frame_name and frame_name != carry_frame:
+                                    temp_frames.append(frame_name)
+                            clip_path, new_carry_frame, prev_local_kind = director_render_local_segment(
+                                job_id, scene_text, aspect, seconds_seg, available["local"],
+                                frame_name, negative_prompt, shared_seed,
+                                prev_kind=prev_local_kind if prev_engine == "local" else "")
+                            local_temp.append(clip_path)
+                            if new_carry_frame:
+                                temp_frames.append(new_carry_frame)
+                        elif candidate == "atlas":
+                            atlas_model = str(settings.get("atlasVideoModel") or DEFAULT_ATLAS_VIDEO_MODEL)
+                            clip = atlas_generate_video_clip(
+                                scene_text, aspect, seconds_seg, atlas_model, available["atlas"]["key"],
+                                attempt_image, "scene.png" if attempt_image else "",
+                                negative_prompt=negative_prompt, seed=shared_seed, seed_pinned=seed_pinned)
+                            clip_path = Path(str(clip.get("mp4Path") or ""))
+                        elif candidate == "xai":
+                            xai_model = str(settings.get("xaiVideoModel") or DEFAULT_XAI_VIDEO_MODEL)
+                            clip = xai_generate_video_clip(
+                                scene_text, aspect, seconds_seg, xai_model, available["xai"]["key"],
+                                [attempt_image] if attempt_image else [])
+                            clip_path = Path(str(clip.get("mp4Path") or ""))
+                        else:  # veo
+                            veo_model = str(settings.get("veoVideoModel") or DEFAULT_VEO_VIDEO_MODEL)
+                            clip = veo_generate_video_clip(
+                                scene_text, aspect, seconds_seg, veo_model, available["veo"]["key"],
+                                start_image=attempt_image,
+                                negative_prompt=negative_prompt, seed=shared_seed)
+                            clip_path = Path(str(clip.get("mp4Path") or ""))
+                        engine = candidate
+                        break
+                    except JobCancelled:
+                        raise
+                    except Exception as exc:  # noqa: BLE001
+                        last_error = exc
+                        clip_path = None
+                        clip = None
+                        if on_progress:
+                            on_progress(f"scene {index} · {candidate} failed; trying an alternative")
+                if clip_path is not None:
+                    break
+            if clip_path is None or not clip_path.exists():
+                raise RuntimeError(
+                    f"Scene {index} failed on every available engine"
+                    + (f' (last error: "{last_error}")' if last_error else ".")
+                )
+
+            produced.append(clip_path)
+            single_clip = clip  # cloud clips carry public urls; local clips leave None
+            scene_infos.append({"scene": index, "engine": engine, "seconds": seconds_seg,
+                                "tier": {0: "safe", 1: "mild", 2: "free"}[tier]})
+            carry_url = extract_last_frame_to_data_url(clip_path) or ""
+            carry_frame = new_carry_frame if engine == "local" else ""
+            prev_engine = engine
+            remaining -= seconds_seg
+
+        if on_progress:
+            on_progress("stitching the scenes into one film")
+        if len(produced) == 1:
+            if single_clip and single_clip.get("url"):
+                combined: dict[str, Any] | None = {"url": single_clip["url"]}
+                if single_clip.get("mp4Url"):
+                    combined["mp4Url"] = single_clip["mp4Url"]
+            else:
+                # A lone local block is a temp file — publish it as an output.
+                ensure_dirs()
+                name = f"video_{int(now())}_{uuid.uuid4().hex[:8]}.mp4"
+                public = OUTPUTS_DIR / name
+                shutil.copy2(produced[0], public)
+                webm_url = transcode_mp4_path_to_webm(public, timeout=900)
+                combined = {"url": webm_url or output_url(name), "mp4Url": output_url(name)}
+        else:
+            combined = stitch_video_paths(produced)
+        if job_cancel_requested(job_id):
+            raise JobCancelled()
+        if not combined or not combined.get("url"):
+            raise RuntimeError("The scenes were generated, but stitching them into one film failed.")
+        result: dict[str, Any] = {"url": combined["url"], "type": "video",
+                                  "seconds": total - remaining, "scenes": scene_infos}
+        if combined.get("mp4Url"):
+            result["mp4Url"] = combined["mp4Url"]
+        return result
+    finally:
+        for path in local_temp:
+            try:
+                path.unlink(missing_ok=True)
+            except Exception:
+                pass
+        for name in temp_frames:
+            try:
+                (COMFY_INPUT_DIR / name).unlink(missing_ok=True)
+            except Exception:
+                pass
+
+
+# --------------------------------------------------------------------------- #
 # Job runners
 # --------------------------------------------------------------------------- #
 def make_job(kind: str) -> str:
@@ -2904,6 +3988,8 @@ def run_video_job(job_id: str, payload: dict[str, Any]) -> None:
                 negative_prompt=negative_prompt,
                 seed=user_seed,
             )
+            result = apply_soundtrack(result, payload,
+                                      on_progress=lambda s: on_modelslab_progress(s, None))
             update_job(job_id, status="done", results=[result],
                        meta={"engine": "modelslab", "modelTitle": model_title, "model": modelslab_model,
                              "provider": provider})
@@ -2935,6 +4021,8 @@ def run_video_job(job_id: str, payload: dict[str, Any]) -> None:
                 on_progress=on_seedance_progress,
                 seed=user_seed,
             )
+            result = apply_soundtrack(result, payload,
+                                      on_progress=lambda s: on_seedance_progress(s, None))
             actual_seedance_model = str(result.get("model") or seedance_model)
             update_job(job_id, status="done", results=[result],
                        meta={"engine": "seedance", "modelTitle": "Seedance 2.0 Video",
@@ -2964,11 +4052,86 @@ def run_video_job(job_id: str, payload: dict[str, Any]) -> None:
                 negative_prompt=negative_prompt,
                 seed=user_seed,
             )
+            result = apply_soundtrack(result, payload, on_progress=on_atlas_progress)
             actual_atlas_model = str(result.get("model") or atlas_model)
             done_meta = {"engine": "atlas", "modelTitle": "Atlas Video", "model": actual_atlas_model,
                          "provider": provider}
             update_job(job_id, status="done", results=[result],
                        meta=done_meta)
+            return
+
+        if model in ("veo", "veo3", "veo-3", "veo-3.1", "veo31", "gemini-veo"):
+            veo_model = str(payload.get("veoVideoModel") or settings.get("veoVideoModel")
+                            or DEFAULT_VEO_VIDEO_MODEL)
+            update_job(job_id, status="running",
+                       meta={"engine": "veo", "modelTitle": "Veo (Gemini)", "model": veo_model})
+            key = gemini_key()
+            if not key:
+                raise RuntimeError("No Gemini API key saved. Add one in Settings to use Veo video.")
+
+            def on_veo_progress(status: str) -> None:
+                update_job(job_id, status="running",
+                           meta={"engine": "veo", "modelTitle": "Veo (Gemini)",
+                                 "model": veo_model, "veoStatus": status})
+
+            result = veo_generate_video(
+                prompt, aspect, payload.get("seconds"), veo_model, key,
+                start_image=payload.get("startImage") or "",
+                on_progress=on_veo_progress,
+                negative_prompt=negative_prompt,
+                seed=user_seed,
+            )
+            result = apply_soundtrack(result, payload, on_progress=on_veo_progress)
+            actual_veo_model = str(result.get("model") or veo_model)
+            update_job(job_id, status="done", results=[result],
+                       meta={"engine": "veo", "modelTitle": "Veo (Gemini)", "model": actual_veo_model})
+            return
+
+        if model == "director":
+            update_job(job_id, status="running",
+                       meta={"engine": "director", "modelTitle": "Director", "model": "director"})
+
+            def on_director_progress(status: str) -> None:
+                update_job(job_id, status="running",
+                           meta={"engine": "director", "modelTitle": "Director",
+                                 "model": "director", "directorStatus": status, "note": status})
+
+            result = director_generate_video(
+                job_id, payload, prompt, aspect,
+                clamp_int(payload.get("seconds"), 60, 8, DIRECTOR_MAX_SECONDS),
+                on_progress=on_director_progress,
+            )
+            result = apply_soundtrack(result, payload, on_progress=on_director_progress)
+            update_job(job_id, status="done", results=[result],
+                       meta={"engine": "director", "modelTitle": "Director", "model": "director",
+                             "scenes": result.get("scenes")})
+            return
+
+        if model in ("sora", "sora-2", "sora2", "sora-2-pro"):
+            sora_model = str(payload.get("soraVideoModel") or settings.get("soraVideoModel")
+                             or DEFAULT_SORA_VIDEO_MODEL)
+            key, provider = sora_key()
+            update_job(job_id, status="running",
+                       meta={"engine": "sora", "modelTitle": "Sora (OpenAI)", "model": sora_model,
+                             "provider": provider})
+            if not key:
+                raise RuntimeError("No OpenAI API key saved. Add one in Settings as sora or openai.")
+
+            def on_sora_progress(status: str, progress: object = None) -> None:
+                update_job(job_id, status="running",
+                           meta={"engine": "sora", "modelTitle": "Sora (OpenAI)",
+                                 "model": sora_model, "soraStatus": status, "progress": progress,
+                                 "provider": provider})
+
+            result = sora_generate_video(
+                prompt, aspect, payload.get("seconds"), sora_model, key,
+                on_progress=on_sora_progress,
+            )
+            result = apply_soundtrack(result, payload,
+                                      on_progress=lambda s: on_sora_progress(s, None))
+            update_job(job_id, status="done", results=[result],
+                       meta={"engine": "sora", "modelTitle": "Sora (OpenAI)",
+                             "model": str(result.get("model") or sora_model), "provider": provider})
             return
 
         if model == "xai":
@@ -2988,6 +4151,8 @@ def run_video_job(job_id: str, payload: dict[str, Any]) -> None:
                 prompt, aspect, payload.get("seconds"), xai_model, key,
                 payload.get("startImages") or payload.get("startImage"), on_progress=on_xai_progress,
             )
+            result = apply_soundtrack(result, payload,
+                                      on_progress=lambda s: on_xai_progress(s, None))
             update_job(job_id, status="done", results=[result],
                        meta={"engine": "xai", "modelTitle": "Grok Imagine Video", "model": xai_model})
             return
@@ -3048,8 +4213,31 @@ def run_video_job(job_id: str, payload: dict[str, Any]) -> None:
         # The webview often can't decode H.264; transcode to VP9 webm for inline
         # playback, keep the mp4 for download. Falls back to mp4 if transcode fails.
         webm_url = transcode_entry_to_webm(entries[0])
+        result = {"url": webm_url or mp4_url, "type": "video", "mp4Url": mp4_url}
+        if str(payload.get("soundtrack") or "").strip():
+            # The clip lives inside ComfyUI — pull a local copy so the
+            # soundtrack can be mixed in. A failed fetch must never sink the
+            # finished video; it only skips the soundtrack.
+            block_path: Path | None = None
+            try:
+                block_path = fetch_comfy_video_to_path(entries[0])
+                result["mp4Path"] = str(block_path)
+                result = apply_soundtrack(
+                    result, payload,
+                    on_progress=lambda s: update_job(job_id, status="running",
+                                                     meta={"engine": "local", "modelTitle": title,
+                                                           "model": model, "note": s}))
+            except Exception as exc:  # noqa: BLE001
+                result.pop("mp4Path", None)
+                result["soundtrackWarning"] = f"Soundtrack skipped: {exc}"
+            finally:
+                if block_path is not None:
+                    try:
+                        block_path.unlink(missing_ok=True)
+                    except Exception:
+                        pass
         update_job(job_id, status="done",
-                   results=[{"url": webm_url or mp4_url, "type": "video", "mp4Url": mp4_url}],
+                   results=[result],
                    meta={"engine": "local", "modelTitle": title, "model": model})
     except JobCancelled:
         update_job(job_id, status="cancelled", error=None,
@@ -3822,8 +5010,28 @@ def render_wanvideo_single_pass(job_id: str, payload: dict[str, Any], aspect: st
         raise RuntimeError("ComfyUI returned no video.")
     mp4_url = entry_to_media_url(entries[0])
     webm_url = transcode_entry_to_webm(entries[0])
+    result = {"url": webm_url or mp4_url, "type": "video", "mp4Url": mp4_url}
+    if str(payload.get("soundtrack") or "").strip():
+        block_path: Path | None = None
+        try:
+            block_path = fetch_comfy_video_to_path(entries[0])
+            result["mp4Path"] = str(block_path)
+            result = apply_soundtrack(
+                result, payload,
+                on_progress=lambda s: update_job(job_id, status="running",
+                                                 meta={"engine": "local", "modelTitle": title,
+                                                       "model": "wanvideo_5b", "note": s}))
+        except Exception as exc:  # noqa: BLE001
+            result.pop("mp4Path", None)
+            result["soundtrackWarning"] = f"Soundtrack skipped: {exc}"
+        finally:
+            if block_path is not None:
+                try:
+                    block_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
     update_job(job_id, status="done",
-               results=[{"url": webm_url or mp4_url, "type": "video", "mp4Url": mp4_url}],
+               results=[result],
                meta={"engine": "local", "modelTitle": title, "model": "wanvideo_5b"})
 
 
@@ -4016,6 +5224,10 @@ def render_local_stitched_video(job_id: str, payload: dict[str, Any], model: str
                   "segments": len(produced), "seconds": total_seconds}
         if combined.get("mp4Url"):
             result["mp4Url"] = combined["mp4Url"]
+        result = apply_soundtrack(
+            result, payload,
+            on_progress=lambda s: update_job(job_id, status="running",
+                                             meta=base_meta(phase="stitch", note=s)))
         update_job(job_id, status="done",
                    results=[result],
                    meta=base_meta(phase="done", blockTotal=len(produced), progress=1.0))
@@ -4211,6 +5423,8 @@ class Handler(BaseHTTPRequestHandler):
         stability_value, stability_provider = stability_key()
         modelslab_value, modelslab_provider = modelslab_key()
         seedance_value, seedance_provider = seedance_key()
+        sora_value, sora_provider = sora_key()
+        elevenlabs_value, elevenlabs_provider = elevenlabs_key()
         return {
             "comfyUrl": settings["comfyUrl"],
             "comfyReachable": models["reachable"],
@@ -4236,6 +5450,12 @@ class Handler(BaseHTTPRequestHandler):
             "seedanceConfigured": bool(seedance_value),
             "seedanceProvider": seedance_provider if seedance_value else "",
             "seedanceVideoModel": settings["seedanceVideoModel"],
+            "veoVideoModel": settings["veoVideoModel"],
+            "soraConfigured": bool(sora_value),
+            "soraProvider": sora_provider if sora_value else "",
+            "soraVideoModel": settings["soraVideoModel"],
+            "elevenlabsConfigured": bool(elevenlabs_value),
+            "elevenlabsProvider": elevenlabs_provider if elevenlabs_value else "",
             "defaultImageEngine": settings["defaultImageEngine"],
         }
 

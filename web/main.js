@@ -64,6 +64,8 @@ function availabilityKey(config) {
     sdxl: !!(config.sdxlConfigured || config.stabilityConfigured),
     modelslab: !!config.modelslabConfigured,
     seedance: !!config.seedanceConfigured,
+    sora: !!config.soraConfigured,
+    eleven: !!config.elevenlabsConfigured,
   });
 }
 
@@ -229,10 +231,18 @@ async function handleGenerateVideo() {
   const s = getState();
   if (s.isGeneratingVideo) return;
   const model = s.videoModel;
+  const directorReady = !!(s.config.atlasConfigured || s.config.xaiConfigured || s.config.geminiConfigured
+    || (s.config.comfyReachable && (s.config.models?.video?.wan22_ti2v_5b || s.config.models?.video?.wan22_14b)));
   const available = model === 'xai'
     ? !!s.config.xaiConfigured
     : model === 'atlas'
       ? !!s.config.atlasConfigured
+    : model === 'veo'
+      ? !!s.config.geminiConfigured
+    : model === 'sora'
+      ? !!s.config.soraConfigured
+    : model === 'director'
+      ? directorReady
     : model === 'seedance'
       ? !!s.config.seedanceConfigured
     : MODELSLAB_VIDEO_MODELS.includes(model)
@@ -241,13 +251,19 @@ async function handleGenerateVideo() {
   if (!available) {
     showToast(model === 'xai'
       ? 'No xAI key saved — open Settings to add one.'
-      : (model === 'atlas' ? 'No Atlas key saved — open Settings to add one as atlas.' : (model === 'seedance' ? 'No Seedance key saved — open Settings to add one as seedance.' : (MODELSLAB_VIDEO_MODELS.includes(model) ? 'No ModelsLab or Stable Diffusion API key saved — open Settings to add one.' : 'That video model is not available in ComfyUI.'))),
+      : (model === 'atlas' ? 'No Atlas key saved — open Settings to add one as atlas.'
+        : (model === 'veo' ? 'No Gemini key saved — open Settings to add one to use Veo.'
+          : (model === 'sora' ? 'No OpenAI key saved — open Settings to add one as sora or openai.'
+            : (model === 'director' ? 'Director needs at least one chain-capable engine: local Wan 2.2, Atlas, Grok, or a Gemini key.'
+              : (model === 'seedance' ? 'No Seedance key saved — open Settings to add one as seedance.'
+                : (MODELSLAB_VIDEO_MODELS.includes(model) ? 'No ModelsLab or Stable Diffusion API key saved — open Settings to add one.'
+                  : 'That video model is not available in ComfyUI.')))))),
     'error');
     return;
   }
   const startImages = VideoPromptView.getStartImages();
-  if (startImages.length && !['wan22_ti2v_5b', 'wan22_14b', 'xai', 'atlas'].includes(model)) {
-    showToast('Start images work with Wan 2.2 TI2V 5B / 14B, Grok Imagine, or Atlas. Select one of those first.', 'info');
+  if (startImages.length && !['wan22_ti2v_5b', 'wan22_14b', 'xai', 'atlas', 'veo', 'director'].includes(model)) {
+    showToast('Start images work with Wan 2.2 TI2V 5B / 14B, Grok Imagine, Atlas, Veo, or Director. Select one of those first.', 'info');
     return;
   }
   const mergeStartImages = VideoPromptView.getMergeStartImages() && startImages.length > 1;
@@ -271,7 +287,7 @@ async function handleGenerateVideo() {
   const timeoutMs = Math.max(60 * 60 * 1000, seconds * 4 * 60 * 1000);
 
   try {
-    const progressBase = model === 'xai' ? 'Grok Imagine is rendering' : (model === 'atlas' ? 'Atlas is rendering' : (model === 'seedance' ? 'Seedance is rendering' : (MODELSLAB_VIDEO_MODELS.includes(model) ? 'Stable Diffusion is rendering' : 'Wan is generating frames')));
+    const progressBase = model === 'xai' ? 'Grok Imagine is rendering' : (model === 'atlas' ? 'Atlas is rendering' : (model === 'veo' ? 'Veo is rendering' : (model === 'sora' ? 'Sora is rendering' : (model === 'director' ? 'Director is filming' : (model === 'seedance' ? 'Seedance is rendering' : (MODELSLAB_VIDEO_MODELS.includes(model) ? 'Stable Diffusion is rendering' : 'Wan is generating frames'))))));
     const { results, modelTitle, status } = await generateVideo(
       {
         prompt,
@@ -283,6 +299,7 @@ async function handleGenerateVideo() {
         mergeStartImages,
         negativePrompt: VideoPromptView.supportsNegativePrompt(model) ? (s.videoNegativePrompt || '').trim() : '',
         seed: VideoPromptView.supportsSeed(model) ? s.videoSeed : '',
+        soundtrack: s.config.elevenlabsConfigured ? (s.videoSoundtrack || '').trim() : '',
       },
       (job) => {
         VideoGalleryView.updateStatus(videoProgressLabel(job, started, progressBase));
@@ -296,6 +313,9 @@ async function handleGenerateVideo() {
     } else {
       if (!results.length) throw new Error('No video was returned.');
       VideoGalleryView.renderResults(results, { modelTitle, prompt });
+      const warning = results[0]?.soundtrackWarning
+        || (results[0]?.stitchStatus !== 'segments' ? results[0]?.stitchWarning : '');
+      if (warning) showToast(warning, 'info');
       showToast('Video created!', 'success');
       saveVideoHistoryEntry({ prompt, modelTitle, videos: results, createdAt: Date.now() });
     }
@@ -329,13 +349,18 @@ function videoSecondsForModel(model, seconds) {
   const value = Number.isFinite(parsed) ? parsed : 2;
   const cloudLong = MODELSLAB_VIDEO_MODELS.includes(model);
   const local = ['wanvideo_5b', 'wan22_14b', 'wan22_ti2v_5b', 'wan21_1_3b'].includes(model);
-  const max = ['atlas', 'xai'].includes(model) ? 60 : (model === 'seedance' ? 30 : ((cloudLong || local) ? 120 : 5));
+  const max = model === 'director' ? 180
+    : (['atlas', 'xai', 'veo', 'sora'].includes(model) ? 60
+      : (model === 'seedance' ? 30 : ((cloudLong || local) ? 120 : 5)));
   return Math.max(1, Math.min(max, value));
 }
 
 function videoModelTitle(model) {
   if (model === 'xai') return 'Grok Imagine Video';
   if (model === 'atlas') return 'Atlas Video';
+  if (model === 'veo') return 'Veo (Gemini)';
+  if (model === 'sora') return 'Sora (OpenAI)';
+  if (model === 'director') return 'Director';
   if (model === 'seedance') return 'Seedance 2.0 Video';
   if (STABLE_DIFFUSION_VIDEO_MODELS.includes(model)) return 'Stable Diffusion Video';
   if (model === 'wan2.6-t2v') return 'wan2.6-t2v';

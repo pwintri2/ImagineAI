@@ -21,6 +21,18 @@ export const VIDEO_MODELS = {
     id: 'atlas', title: 'Atlas Video', subtitle: 'Cloud · Atlas Cloud',
     note: 'Wan 2.7 through Atlas Cloud · up to 60s, chained + crossfaded locally', defaultSeconds: 5,
   },
+  veo: {
+    id: 'veo', title: 'Veo', subtitle: 'Cloud · Gemini API',
+    note: 'Google Veo 3.1 with native audio · uses your Gemini key · up to 60s, chained + crossfaded', defaultSeconds: 8,
+  },
+  director: {
+    id: 'director', title: 'Director', subtitle: 'Long film · mixed engines',
+    note: 'Up to 3 minutes · plans scenes, picks the engine per scene (Wan = most artistic freedom, Grok = some, Veo = strict) and chains them into one film', defaultSeconds: 60,
+  },
+  sora: {
+    id: 'sora', title: 'Sora', subtitle: 'Cloud · OpenAI',
+    note: 'OpenAI Sora 2 with audio · native extensions up to 60s · API retires Sep 24, 2026', defaultSeconds: 8,
+  },
   seedance: {
     id: 'seedance', title: 'Seedance 2.0', subtitle: 'Cloud · Seedance2',
     note: 'Seedance 2.0 text-to-video · 16-30s is stitched locally', defaultSeconds: 5,
@@ -48,7 +60,7 @@ export const VIDEO_MODELS = {
  * onProgress(job) is called on each poll tick. opts.onStart(jobId) fires once the
  * job is queued (so the caller can offer a cancel button); opts.timeoutMs caps the poll.
  */
-export async function generateVideo({ prompt, model, aspect, seconds, startImage, startImages, mergeStartImages, negativePrompt, seed }, onProgress, opts = {}) {
+export async function generateVideo({ prompt, model, aspect, seconds, startImage, startImages, mergeStartImages, negativePrompt, seed, soundtrack }, onProgress, opts = {}) {
   const images = Array.isArray(startImages) ? startImages : (startImage ? [startImage] : []);
   // Clamp to the providers' 32-bit range; larger values would lose precision in
   // the float parse and silently diverge from what the user typed.
@@ -64,9 +76,10 @@ export async function generateVideo({ prompt, model, aspect, seconds, startImage
     startImageNames: images.map((img) => img.name || ''),
     mergeStartImages: !!mergeStartImages && images.length > 1,
     // Omit when empty so the backend keeps its own defaults (random seed,
-    // provider negative prompt).
+    // provider negative prompt, no soundtrack).
     ...(negativePrompt ? { negativePrompt } : {}),
     ...(Number.isFinite(parsedSeed) && parsedSeed >= 0 ? { seed: parsedSeed } : {}),
+    ...(soundtrack ? { soundtrack } : {}),
   });
   if (opts.onStart) opts.onStart(jobId);
   const job = await pollJob(jobId, { onTick: onProgress, timeoutMs: opts.timeoutMs });
