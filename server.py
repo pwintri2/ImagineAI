@@ -3391,9 +3391,11 @@ def director_scene_tier(text: object) -> int:
 
 # Engine preference per tier — most permissive first for artistic scenes, best
 # quality first for safe ones. Only chain-capable engines take part (Seedance,
-# ModelsLab, and Sora cannot start from a carried frame).
+# ModelsLab, and Sora cannot start from a carried frame). Free-tier scenes
+# prefer Atlas' cloud Wan 2.7 over local Wan for speed; local Wan (which has no
+# moderation at all) stays as the fallback when Atlas' output filter refuses.
 DIRECTOR_TIER_PREFS = {
-    2: ("local", "atlas", "xai", "veo"),
+    2: ("atlas", "local", "xai", "veo"),
     1: ("xai", "atlas", "local", "veo"),
     0: ("veo", "atlas", "xai", "local"),
 }

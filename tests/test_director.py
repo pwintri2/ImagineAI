@@ -22,8 +22,9 @@ class DirectorPlanningTests(unittest.TestCase):
         available = {"local": {}, "atlas": {}, "xai": {}, "veo": {}}
         self.assertEqual(server.director_pick_engine(0, available), "veo")
         self.assertEqual(server.director_pick_engine(1, available), "xai")
-        self.assertEqual(server.director_pick_engine(2, available), "local")
-        self.assertEqual(server.director_pick_engine(2, {"veo": {}, "atlas": {}}), "atlas")
+        # Free tier prefers Atlas' cloud Wan for speed; local Wan is the fallback.
+        self.assertEqual(server.director_pick_engine(2, available), "atlas")
+        self.assertEqual(server.director_pick_engine(2, {"veo": {}, "local": {}}), "local")
         with self.assertRaisesRegex(RuntimeError, "chain-capable"):
             server.director_pick_engine(0, {})
 
