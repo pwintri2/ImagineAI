@@ -43,8 +43,8 @@ export function supportsSeed(model) {
 }
 
 function maxSecondsForModel(model) {
-  if (model === 'atlas') return 60;   // ~15s Wan 2.7 segments, chained + crossfaded locally
-  if (['xai', 'seedance'].includes(model)) return 30;
+  if (['atlas', 'xai'].includes(model)) return 60;   // ~15s segments, chained + crossfaded locally
+  if (model === 'seedance') return 30;
   if (MODELSLAB_VIDEO_MODELS.includes(model)) return 120;   // cloud, stitched — no local VRAM used
   if (LOCAL_WAN_MODELS.includes(model)) return 120;   // rendered in ~10s blocks, stitched together
   return 5;
@@ -224,7 +224,7 @@ export function render() {
 function videoHint(s, anyModel) {
   if (s.videoModel === 'xai') {
     if (!s.config.xaiConfigured) return 'Add an xAI key in Settings to generate Grok videos.';
-    return 'Grok Imagine supports up to 15s per API call; 16-30s is stitched locally from multiple Grok segments.';
+    return 'Grok Imagine supports up to 15s per API call; 16-60s is stitched locally — each segment continues from the previous one\'s last frame, and video and audio crossfade at the seams.';
   }
   if (s.videoModel === 'atlas') {
     if (!s.config.atlasConfigured) return 'Add an Atlas key in Settings as atlas to generate Atlas videos.';

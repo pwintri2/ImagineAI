@@ -564,7 +564,7 @@ class AtlasTests(unittest.TestCase):
         with patch.object(server, "atlas_generate_video_clip", side_effect=fake_clip), \
              patch.object(server, "extract_last_frame_to_data_url",
                           return_value="data:image/png;base64,lastframe") as extract, \
-             patch.object(server, "concat_mp4_paths_to_webm", return_value="/api/local-media?name=atlas-stitched.webm"):
+             patch.object(server, "stitch_video_paths", return_value={"url": "/api/local-media?name=atlas-stitched.webm", "mp4Url": "/api/local-media?name=atlas-stitched.mp4"}):
             result = server.atlas_generate_video(
                 "a long camera move", "wide", 30, "kling-v2.0", "secret",
                 start_image="data:image/png;base64,abc", start_image_name="start.png",
@@ -572,6 +572,7 @@ class AtlasTests(unittest.TestCase):
         )
 
         self.assertEqual(result["url"], "/api/local-media?name=atlas-stitched.webm")
+        self.assertEqual(result["mp4Url"], "/api/local-media?name=atlas-stitched.mp4")
         self.assertEqual(len(result["segments"]), 2)
         self.assertNotIn("mp4Path", result["segments"][0])
         self.assertEqual([call[2] for call in calls], [15, 15])
@@ -601,7 +602,7 @@ class AtlasTests(unittest.TestCase):
         with patch.object(server, "DEFAULT_ATLAS_I2V_MODEL", "kwaivgi/kling-v2.1/image-to-video"), \
              patch.object(server, "atlas_generate_video_clip", side_effect=fake_clip), \
              patch.object(server, "extract_last_frame_to_data_url", return_value="data:image/png;base64,f"), \
-             patch.object(server, "concat_mp4_paths_to_webm", return_value="/stitched.webm"):
+             patch.object(server, "stitch_video_paths", return_value={"url": "/stitched.webm"}):
             server.atlas_generate_video("a story", "wide", 30, "", "secret")
 
         self.assertEqual(calls[0], (server.DEFAULT_ATLAS_VIDEO_MODEL, False, 15))
@@ -619,7 +620,7 @@ class AtlasTests(unittest.TestCase):
         with patch.object(server, "DEFAULT_ATLAS_WAN27_SEED", "123"), \
              patch.object(server, "atlas_generate_video_clip", side_effect=fake_clip), \
              patch.object(server, "extract_last_frame_to_data_url", return_value=""), \
-             patch.object(server, "concat_mp4_paths_to_webm", return_value="/stitched.webm"):
+             patch.object(server, "stitch_video_paths", return_value={"url": "/stitched.webm"}):
             server.atlas_generate_video("a story", "wide", 30, "", "secret")
 
         self.assertEqual(seeds, [(123, True), (123, True)])
@@ -637,7 +638,7 @@ class AtlasTests(unittest.TestCase):
 
         with patch.object(server, "atlas_generate_video_clip", side_effect=fake_clip), \
              patch.object(server, "extract_last_frame_to_data_url", return_value="data:image/png;base64,f"), \
-             patch.object(server, "concat_mp4_paths_to_webm", return_value="/stitched.webm"):
+             patch.object(server, "stitch_video_paths", return_value={"url": "/stitched.webm"}):
             result = server.atlas_generate_video("a story", "wide", 30, "", "secret")
 
         # Segment 2: chained attempt raised, unchained retry succeeded.
@@ -658,7 +659,7 @@ class AtlasTests(unittest.TestCase):
 
         with patch.object(server, "atlas_generate_video_clip", side_effect=fake_clip), \
              patch.object(server, "extract_last_frame_to_data_url", return_value=""), \
-             patch.object(server, "concat_mp4_paths_to_webm", return_value="/stitched.webm"):
+             patch.object(server, "stitch_video_paths", return_value={"url": "/stitched.webm"}):
             server.atlas_generate_video("a long camera move", "wide", 30, "", "secret")
 
         self.assertEqual(len(seeds), 2)
@@ -679,7 +680,7 @@ class AtlasTests(unittest.TestCase):
             }
 
         with patch.object(server, "atlas_generate_video_clip", side_effect=fake_clip), \
-             patch.object(server, "concat_mp4_paths_to_webm", return_value=None):
+             patch.object(server, "stitch_video_paths", return_value=None):
             result = server.atlas_generate_video(
                 "a long camera move", "wide", 30, "kling-v2.0", "secret",
                 start_image="data:image/png;base64,abc", start_image_name="start.png",

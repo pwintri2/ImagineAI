@@ -85,7 +85,7 @@ export function renderResults(videos, meta = {}) {
   galleryEl.innerHTML = `
     <div class="fade-in space-y-4">
       <div class="video-card group relative rounded-2xl overflow-hidden border border-white/10 bg-white/5 aspect-video">
-        <video id="generatedVideo" controls loop muted playsinline class="w-full h-full object-contain bg-black" preload="auto">
+        <video id="generatedVideo" controls loop playsinline class="w-full h-full object-contain bg-black" preload="auto">
           ${sourceTag(video.url)}
           ${video.mp4Url && video.mp4Url !== video.url ? sourceTag(video.mp4Url, 'video/mp4') : ''}
         </video>

@@ -327,10 +327,9 @@ function videoProgressLabel(job, started, base) {
 function videoSecondsForModel(model, seconds) {
   const parsed = Number.parseInt(seconds, 10);
   const value = Number.isFinite(parsed) ? parsed : 2;
-  const cloud = ['xai', 'seedance'].includes(model);
   const cloudLong = MODELSLAB_VIDEO_MODELS.includes(model);
   const local = ['wanvideo_5b', 'wan22_14b', 'wan22_ti2v_5b', 'wan21_1_3b'].includes(model);
-  const max = model === 'atlas' ? 60 : (cloud ? 30 : ((cloudLong || local) ? 120 : 5));
+  const max = ['atlas', 'xai'].includes(model) ? 60 : (model === 'seedance' ? 30 : ((cloudLong || local) ? 120 : 5));
   return Math.max(1, Math.min(max, value));
 }
 

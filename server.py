@@ -90,7 +90,7 @@ COMFY_VIDEO_TIMEOUT = float(os.environ.get("IMAGINEAI_VIDEO_TIMEOUT", "3600"))
 COMFY_MISSING_HISTORY_GRACE = float(os.environ.get("IMAGINEAI_MISSING_HISTORY_GRACE", "25"))
 XAI_VIDEO_TIMEOUT = float(os.environ.get("IMAGINEAI_XAI_VIDEO_TIMEOUT", "1200"))
 XAI_MAX_SECONDS_PER_REQUEST = 15
-XAI_MAX_STITCHED_SECONDS = 30
+XAI_MAX_STITCHED_SECONDS = 60
 MODELSLAB_MAX_STITCHED_SECONDS = 120  # cloud (no local VRAM); stitched from ~5s ModelsLab segments
 SEEDANCE_MAX_SECONDS_PER_REQUEST = 15
 SEEDANCE_MAX_STITCHED_SECONDS = 30
@@ -110,6 +110,12 @@ SEEDANCE_VIDEO_TIMEOUT = float(os.environ.get("IMAGINEAI_SEEDANCE_VIDEO_TIMEOUT"
 # previous segment's last frame, so the fade also hides the duplicated frame.
 # Set to 0 to restore plain hard-cut concatenation.
 STITCH_OVERLAP_SECONDS = max(0.0, min(2.0, float(os.environ.get("IMAGINEAI_STITCH_OVERLAP_SECONDS", "0.5"))))
+# The stitched master is an H.264 mp4 that keeps the segments' audio (crossfaded
+# along with the video). CRF 16 + preset slow is visually lossless; the webm the
+# UI plays inline is derived from this master.
+STITCH_MP4_CRF = str(max(0, min(51, int(os.environ.get("IMAGINEAI_STITCH_MP4_CRF", "16")))))
+STITCH_MP4_PRESET = os.environ.get("IMAGINEAI_STITCH_MP4_PRESET", "slow").strip() or "slow"
+STITCH_AUDIO_RATE = 48000
 
 # Local Wan long-form video: render in blocks and stitch them into one clip.
 # The 14B model is too heavy to render 120s in a single pass on a small GPU, so
@@ -1398,18 +1404,21 @@ def xai_generate_video(prompt: str, aspect: str, seconds: object, model: str, ke
         prev_path = Path(clip_path) if clip_path else None
 
     paths = [Path(str(clip.get("mp4Path") or "")) for clip in clips if clip.get("mp4Path")]
-    combined_url = concat_mp4_paths_to_webm(paths)
-    if not combined_url:
+    combined = stitch_video_paths(paths)
+    if not combined:
         return segmented_video_result(
             clips,
             xai_public_video_result,
             "Grok generated the video segments, but local stitching is unavailable. Showing the segments instead.",
         )
-    return {
-        "url": combined_url,
+    result = {
+        "url": combined["url"],
         "type": "video",
         "segments": [xai_public_video_result(clip) for clip in clips],
     }
+    if combined.get("mp4Url"):
+        result["mp4Url"] = combined["mp4Url"]
+    return result
 
 
 # --------------------------------------------------------------------------- #
@@ -1590,15 +1599,18 @@ def seedance_generate_video(prompt: str, aspect: str, seconds: object, model: st
         ))
 
     paths = [Path(str(clip.get("mp4Path") or "")) for clip in clips if clip.get("mp4Path")]
-    combined_url = concat_mp4_paths_to_webm(paths)
-    if not combined_url:
+    combined = stitch_video_paths(paths)
+    if not combined:
         raise RuntimeError("Seedance generated the video segments, but ImagineAI could not stitch them into one file.")
-    return {
-        "url": combined_url,
+    result = {
+        "url": combined["url"],
         "type": "video",
         "model": clips[0].get("model") or model or DEFAULT_SEEDANCE_VIDEO_MODEL,
         "segments": [seedance_public_video_result(clip) for clip in clips],
     }
+    if combined.get("mp4Url"):
+        result["mp4Url"] = combined["mp4Url"]
+    return result
 
 
 def seedance_generate_image(prompt: str, aspect: str, count: int, model: str, key: str,
@@ -2168,21 +2180,24 @@ def atlas_generate_video_with_model(prompt: str, aspect: str, seconds: object, m
         prev_path = Path(clip_path) if clip_path else None
 
     paths = [Path(str(clip.get("mp4Path") or "")) for clip in clips if clip.get("mp4Path")]
-    combined_url = concat_mp4_paths_to_webm(paths)
+    combined = stitch_video_paths(paths)
     actual_model = clips[0].get("model") or model_id
-    if not combined_url:
+    if not combined:
         return segmented_video_result(
             clips,
             atlas_public_video_result,
             "Atlas generated the video segments, but local stitching is unavailable. Showing the segments instead.",
             {"model": actual_model},
         )
-    return {
-        "url": combined_url,
+    result = {
+        "url": combined["url"],
         "type": "video",
         "model": actual_model,
         "segments": [atlas_public_video_result(clip) for clip in clips],
     }
+    if combined.get("mp4Url"):
+        result["mp4Url"] = combined["mp4Url"]
+    return result
 
 
 def atlas_generate_video(prompt: str, aspect: str, seconds: object, model: str, key: str,
@@ -2591,18 +2606,21 @@ def modelslab_generate_video(prompt: str, aspect: str, seconds: object, model: s
         ))
 
     paths = [Path(str(clip.get("mp4Path") or "")) for clip in clips if clip.get("mp4Path")]
-    combined_url = concat_mp4_paths_to_webm(paths)
-    if not combined_url:
+    combined = stitch_video_paths(paths)
+    if not combined:
         return segmented_video_result(
             clips,
             modelslab_public_video_result,
             "ModelsLab generated the video segments, but local stitching is unavailable. Showing the segments instead.",
         )
-    return {
-        "url": combined_url,
+    result = {
+        "url": combined["url"],
         "type": "video",
         "segments": [modelslab_public_video_result(clip) for clip in clips],
     }
+    if combined.get("mp4Url"):
+        result["mp4Url"] = combined["mp4Url"]
+    return result
 
 
 # --------------------------------------------------------------------------- #
@@ -3040,6 +3058,10 @@ def run_video_job(job_id: str, payload: dict[str, Any]) -> None:
         update_job(job_id, status="error", error=str(exc))
 
 
+# mp4 -> VP9 webm for inline playback. Audio (when present) rides along as
+# Opus, best-effort: when audio processing fails mid-stream the track is
+# flushed so it ends cleanly at the failure point and the transcode continues
+# video-only rather than failing.
 _TRANSCODE_SRC = r"""
 import sys, av
 src, dst = sys.argv[1], sys.argv[2]
@@ -3051,11 +3073,65 @@ ovs.width = ivs.width
 ovs.height = ivs.height
 ovs.pix_fmt = 'yuv420p'
 ovs.options = {'crf': '34', 'b:v': '0', 'deadline': 'realtime', 'cpu-used': '8', 'row-mt': '1'}
-for frame in inp.decode(ivs):
-    for pkt in ovs.encode(frame):
+
+ias = inp.streams.audio[0] if inp.streams.audio else None
+aus = None
+resampler = None
+fifo = None
+if ias is not None:
+    try:
+        aus = out.add_stream('libopus', rate=48000)
+        aus.bit_rate = 128000
+        resampler = av.AudioResampler(format='flt', layout='stereo', rate=48000)
+        fifo = av.AudioFifo()
+    except Exception:
+        aus = None
+
+def push_audio(frame):
+    for resampled in resampler.resample(frame):
+        fifo.write(resampled)
+    # Opus wants fixed 960-sample (20 ms @ 48 kHz) frames.
+    while fifo.samples >= 960:
+        chunk = fifo.read(960)
+        for pkt in aus.encode(chunk):
+            out.mux(pkt)
+
+def flush_audio():
+    remainder = fifo.read()
+    if remainder is not None:
+        for pkt in aus.encode(remainder):
+            out.mux(pkt)
+    for pkt in aus.encode():
         out.mux(pkt)
+
+# Do NOT skip the dts=None flush packets demux yields at EOF: decoding them
+# drains the decoders' reorder buffers — without that, B-frame inputs (the
+# x264 stitched master always has them) lose their final frames.
+streams = [ivs] if aus is None else [ivs, ias]
+for packet in inp.demux(streams):
+    if packet.stream is ivs:
+        for frame in packet.decode():
+            for pkt in ovs.encode(frame):
+                out.mux(pkt)
+    elif aus is not None:
+        try:
+            for frame in packet.decode():
+                push_audio(frame)
+        except Exception:
+            # End the track cleanly at the failure point, then go video-only.
+            try:
+                flush_audio()
+            except Exception:
+                pass
+            aus = None
 for pkt in ovs.encode():
     out.mux(pkt)
+if aus is not None:
+    try:
+        push_audio(None)
+        flush_audio()
+    except Exception:
+        pass
 out.close()
 inp.close()
 """
@@ -3131,7 +3207,207 @@ finally:
 """
 
 
-def transcode_mp4_path_to_webm(src_path: Path) -> str | None:
+# Stitch clips into one high-quality H.264 mp4 that KEEPS AUDIO: video frames
+# crossfade at every seam exactly like the webm stitcher, and the segments'
+# audio tracks are equal-power crossfaded over the same window. Clips without
+# audio contribute silence; when no clip has audio the mp4 is video-only.
+# argv: overlap_seconds crf preset dst src1 src2 ...
+_STITCH_MP4_SRC = r"""
+import sys, av
+import numpy as np
+
+overlap_seconds = max(0.0, float(sys.argv[1]))
+crf, preset = sys.argv[2], sys.argv[3]
+dst, *srcs = sys.argv[4:]
+if not srcs:
+    raise SystemExit(2)
+RATE = 48000
+
+
+def clip_seconds(path):
+    try:
+        c = av.open(path)
+        d = float(c.duration / av.time_base) if c.duration else 0.0
+        c.close()
+        return max(0.0, d)
+    except Exception:
+        return 0.0
+
+
+def decode_audio(path):
+    # -> ((2, N) float32 at RATE, had_real_audio)
+    try:
+        inp = av.open(path)
+        if not inp.streams.audio:
+            inp.close()
+            raise ValueError('no audio stream')
+        resampler = av.AudioResampler(format='fltp', layout='stereo', rate=RATE)
+        chunks = []
+        for frame in inp.decode(inp.streams.audio[0]):
+            for out_frame in resampler.resample(frame):
+                chunks.append(out_frame.to_ndarray().astype(np.float32))
+        for out_frame in resampler.resample(None):
+            chunks.append(out_frame.to_ndarray().astype(np.float32))
+        inp.close()
+        if not chunks:
+            raise ValueError('empty audio stream')
+        return np.concatenate(chunks, axis=1), True
+    except Exception:
+        return np.zeros((2, int(round(clip_seconds(path) * RATE))), dtype=np.float32), False
+
+
+# The audio seam window must match the video seam window exactly, so resolve
+# the frame rate first and derive both windows from the same frame count.
+probe = av.open(srcs[0])
+fps = float(probe.streams.video[0].average_rate or 16)
+probe.close()
+overlap_frames = max(0, int(round(fps * overlap_seconds)))
+ov_samples = int(round(overlap_frames / fps * RATE))
+
+parts = [decode_audio(src) for src in srcs]
+has_audio = any(real for _, real in parts)
+audio = parts[0][0]
+for part, _ in parts[1:]:
+    k = min(ov_samples, audio.shape[1], part.shape[1])
+    if k > 0:
+        t = np.linspace(0.0, 1.0, k, endpoint=False, dtype=np.float32)
+        seam = audio[:, -k:] * np.sqrt(1.0 - t) + part[:, :k] * np.sqrt(t)
+        audio = np.concatenate([audio[:, :-k], seam, part[:, k:]], axis=1)
+    else:
+        audio = np.concatenate([audio, part], axis=1)
+
+out = av.open(dst, 'w', options={'movflags': '+faststart'})
+ovs = None
+aus = None
+audio_pos = 0
+AAC_FRAME = 1024
+
+
+def feed_audio(upto_seconds):
+    global audio_pos
+    if aus is None:
+        return
+    target = audio.shape[1] if upto_seconds is None else min(audio.shape[1], int(upto_seconds * RATE))
+    while audio_pos < target:
+        n = min(AAC_FRAME, audio.shape[1] - audio_pos)
+        chunk = np.ascontiguousarray(audio[:, audio_pos:audio_pos + n])
+        frame = av.AudioFrame.from_ndarray(chunk, format='fltp', layout='stereo')
+        frame.sample_rate = RATE
+        frame.pts = audio_pos
+        for pkt in aus.encode(frame):
+            out.mux(pkt)
+        audio_pos += n
+
+
+def encode_rgb(arr):
+    frame = av.VideoFrame.from_ndarray(arr, format='rgb24')
+    frame = frame.reformat(format='yuv420p')
+    frame.pts = None
+    for pkt in ovs.encode(frame):
+        out.mux(pkt)
+
+
+frames_done = 0
+tail = []
+try:
+    last_index = len(srcs) - 1
+    for src_index, src in enumerate(srcs):
+        inp = av.open(src)
+        ivs = inp.streams.video[0]
+        if ovs is None:
+            ovs = out.add_stream('libx264', rate=ivs.average_rate or 16)
+            ovs.width = ivs.width
+            ovs.height = ivs.height
+            ovs.pix_fmt = 'yuv420p'
+            ovs.options = {'crf': crf, 'preset': preset}
+            if has_audio:
+                aus = out.add_stream('aac', rate=RATE)
+                aus.layout = 'stereo'
+                aus.bit_rate = 192000
+        prev_tail = tail
+        tail = []
+        blended = 0
+        hold_back = overlap_frames if src_index < last_index else 0
+        for frame in inp.decode(ivs):
+            arr = frame.reformat(width=ovs.width, height=ovs.height, format='rgb24').to_ndarray()
+            if blended < len(prev_tail):
+                alpha = (blended + 1.0) / (len(prev_tail) + 1.0)
+                mix = prev_tail[blended].astype(np.float32) * (1.0 - alpha) + arr.astype(np.float32) * alpha
+                arr = np.clip(mix + 0.5, 0, 255).astype(np.uint8)
+                blended += 1
+                encode_rgb(arr)
+                frames_done += 1
+                feed_audio(frames_done / fps)
+                continue
+            tail.append(arr)
+            if len(tail) > hold_back:
+                encode_rgb(tail.pop(0))
+                frames_done += 1
+                feed_audio(frames_done / fps)
+        for arr in prev_tail[blended:]:
+            encode_rgb(arr)
+            frames_done += 1
+        inp.close()
+    for arr in tail:
+        encode_rgb(arr)
+    for pkt in ovs.encode():
+        out.mux(pkt)
+    feed_audio(None)
+    if aus is not None:
+        for pkt in aus.encode():
+            out.mux(pkt)
+finally:
+    out.close()
+"""
+
+
+def stitch_mp4_paths_with_audio(src_paths: list[Path]) -> tuple[str, Path] | None:
+    """Stitch segment mp4s into one crossfaded H.264 mp4 that keeps audio, via
+    ComfyUI's PyAV. Returns (url, path) or None."""
+    paths = [p for p in src_paths if p.exists() and p.is_file()]
+    if len(paths) < 2 or not Path(COMFY_PYTHON).exists():
+        return None
+    ensure_dirs()
+    name = f"video_{int(now())}_{uuid.uuid4().hex[:8]}.mp4"
+    out_path = OUTPUTS_DIR / name
+    try:
+        result = subprocess.run(
+            [COMFY_PYTHON, "-c", _STITCH_MP4_SRC, str(STITCH_OVERLAP_SECONDS),
+             STITCH_MP4_CRF, STITCH_MP4_PRESET, str(out_path), *[str(p) for p in paths]],
+            capture_output=True, timeout=1800,
+        )
+        if result.returncode == 0 and out_path.exists() and out_path.stat().st_size > 0:
+            return output_url(name), out_path
+    except Exception:
+        pass
+    try:
+        out_path.unlink(missing_ok=True)
+    except Exception:
+        pass
+    return None
+
+
+def stitch_video_paths(src_paths: list[Path]) -> dict[str, Any] | None:
+    """Stitch segments into the best playable result: a high-quality mp4 master
+    that keeps audio, plus a VP9/Opus webm derived from it for inline playback.
+    Falls back to the audio-less webm concat when the mp4 path is unavailable —
+    or when only the webm derivation fails, so the inline player never gets an
+    H.264 url the Linux webview can't decode. Returns {url, mp4Url?, mp4Path?}
+    or None."""
+    mp4 = stitch_mp4_paths_with_audio(src_paths)
+    if mp4:
+        mp4_url, mp4_path = mp4
+        # A 60-120s master takes longer than the single-clip default budget.
+        webm_url = (transcode_mp4_path_to_webm(mp4_path, timeout=900)
+                    or concat_mp4_paths_to_webm(src_paths))
+        return {"url": webm_url or mp4_url, "mp4Url": mp4_url, "mp4Path": str(mp4_path)}
+    url = concat_mp4_paths_to_webm(src_paths)
+    if url:
+        return {"url": url}
+    return None
+
+
+def transcode_mp4_path_to_webm(src_path: Path, timeout: float = 300) -> str | None:
     """Re-encode a local mp4 to VP9 webm via ComfyUI's PyAV environment."""
     if not Path(COMFY_PYTHON).exists():
         return None
@@ -3140,7 +3416,7 @@ def transcode_mp4_path_to_webm(src_path: Path) -> str | None:
     try:
         result = subprocess.run(
             [COMFY_PYTHON, "-c", _TRANSCODE_SRC, str(src_path), str(out_path)],
-            capture_output=True, timeout=300,
+            capture_output=True, timeout=timeout,
         )
         if result.returncode != 0 or not out_path.exists() or out_path.stat().st_size == 0:
             return None
@@ -3728,13 +4004,20 @@ def render_local_stitched_video(job_id: str, payload: dict[str, Any], model: str
         update_job(job_id, status="running", meta=base_meta(
             phase="stitch", blockTotal=len(produced), progress=0.99,
             note="Stitching the blocks together…"))
-        combined_url = (transcode_mp4_path_to_webm(produced[0]) if len(produced) == 1
-                        else concat_mp4_paths_to_webm(produced))
-        if not combined_url:
+        if len(produced) == 1:
+            combined = {"url": transcode_mp4_path_to_webm(produced[0])}
+        else:
+            combined = stitch_video_paths(produced)
+        if job_cancel_requested(job_id):
+            raise JobCancelled()
+        if not combined or not combined.get("url"):
             raise RuntimeError("Rendered the blocks but couldn't stitch them into one video.")
+        result = {"url": combined["url"], "type": "video",
+                  "segments": len(produced), "seconds": total_seconds}
+        if combined.get("mp4Url"):
+            result["mp4Url"] = combined["mp4Url"]
         update_job(job_id, status="done",
-                   results=[{"url": combined_url, "type": "video",
-                             "segments": len(produced), "seconds": total_seconds}],
+                   results=[result],
                    meta=base_meta(phase="done", blockTotal=len(produced), progress=1.0))
     finally:
         for clip in produced:

@@ -104,11 +104,12 @@ class ModelsLabTests(unittest.TestCase):
             }
 
         with patch.object(server, "modelslab_generate_video_clip", side_effect=fake_clip), \
-             patch.object(server, "concat_mp4_paths_to_webm", return_value="/api/local-media?name=stitched.webm"):
+             patch.object(server, "stitch_video_paths", return_value={"url": "/api/local-media?name=stitched.webm", "mp4Url": "/api/local-media?name=stitched.mp4"}):
             result = server.modelslab_generate_video("a wave", "wide", 12, "wan2.2", "secret",
                                                      negative_prompt="blurry, watermark", seed=7)
 
         self.assertEqual(result["url"], "/api/local-media?name=stitched.webm")
+        self.assertEqual(result["mp4Url"], "/api/local-media?name=stitched.mp4")
         self.assertEqual(len(result["segments"]), 3)
         self.assertNotIn("mp4Path", result["segments"][0])
         self.assertEqual([call[2] for call in calls], [5, 5, 2])
@@ -178,7 +179,7 @@ class ModelsLabTests(unittest.TestCase):
             }
 
         with patch.object(server, "modelslab_generate_video_clip", side_effect=fake_clip), \
-             patch.object(server, "concat_mp4_paths_to_webm", return_value=None):
+             patch.object(server, "stitch_video_paths", return_value=None):
             result = server.modelslab_generate_video("a wave", "wide", 12, "wan2.2", "secret")
 
         self.assertEqual(result["stitchStatus"], "segments")

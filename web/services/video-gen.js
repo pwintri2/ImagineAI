@@ -3,7 +3,7 @@ import { startVideoJob, pollJob } from './api.js';
 export const VIDEO_MODELS = {
   xai: {
     id: 'xai', title: 'Grok Imagine', subtitle: 'Cloud · xAI',
-    note: 'xAI text-to-video and image-to-video · uses your xAI quota', defaultSeconds: 5,
+    note: 'xAI text-to-video and image-to-video · up to 60s, chained + crossfaded with audio · uses your xAI quota', defaultSeconds: 5,
   },
   sdxl: {
     id: 'sdxl', title: 'Stable Diffusion Video', subtitle: 'Cloud · ModelsLab',

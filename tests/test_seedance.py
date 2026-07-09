@@ -125,10 +125,11 @@ class SeedanceTests(unittest.TestCase):
             }
 
         with patch.object(server, "seedance_generate_video_clip", side_effect=fake_clip), \
-             patch.object(server, "concat_mp4_paths_to_webm", return_value="/api/local-media?name=seedance-stitched.webm"):
+             patch.object(server, "stitch_video_paths", return_value={"url": "/api/local-media?name=seedance-stitched.webm", "mp4Url": "/api/local-media?name=seedance-stitched.mp4"}):
             result = server.seedance_generate_video("a long scene", "wide", 30, "seedance-2-0", "secret", seed=42)
 
         self.assertEqual(result["url"], "/api/local-media?name=seedance-stitched.webm")
+        self.assertEqual(result["mp4Url"], "/api/local-media?name=seedance-stitched.mp4")
         self.assertEqual(len(result["segments"]), 2)
         self.assertNotIn("mp4Path", result["segments"][0])
         self.assertEqual([call[2] for call in calls], [15, 15])

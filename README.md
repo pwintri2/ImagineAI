@@ -74,7 +74,7 @@ python3 server.py --port 8799 --open
 | **FLUX.1 Schnell FP8** — local · ComfyUI | ✅ | — | — | — | — | — |
 | **Wan 2.1 / 2.2** — local · ComfyUI | — | ✅ | — | ✅ multiple → keyframes | 120 s stitched | — |
 | **Google Gemini** | ✅ | — | ✅ | — | — | `GEMINI_API_KEY` |
-| **xAI Grok Imagine** | ✅ | ✅ | ✅ | ✅ multiple → blended mix | 30 s (15 s per call, stitched) | `XAI_API_KEY` |
+| **xAI Grok Imagine** | ✅ | ✅ | ✅ | ✅ multiple → blended mix | 60 s stitched (chained + crossfaded) | `XAI_API_KEY` |
 | **Atlas Cloud** — Wan 2.7 / Seedream / Kling | ✅ | ✅ | ✅ via edit model | ✅ first image only | 60 s stitched (chained + crossfaded) | `ATLAS_API_KEY` |
 | **Seedance2.ai** | 🟡 still frames | ✅ | — | — | 30 s (15 s per call, stitched) | `SEEDANCE_API_KEY` |
 | **ModelsLab / Stable Diffusion API** | ✅ | ✅ `wan2.2` / `wan2.6-t2v` | — | — | 120 s (~5 s segments, stitched) | `MODELSLAB_API_KEY` |
@@ -93,9 +93,9 @@ python3 server.py --port 8799 --open
 1. **Block renderer** — the clip is generated as short blocks; a lossless PNG of each block's last frame (grabbed inside ComfyUI, *before* H.264 compression) seeds the next block as image-to-video, so continuity holds without artifacts compounding into mush. Blocks that hit an out-of-memory error are automatically retried at a smaller length, then everything is stitched into one file.
 2. **WanVideoWrapper path** — if kijai's WanVideoWrapper custom node (plus its umt5 encoder) is installed, the Wan 2.2 TI2V 5B model runs with block-swap streaming transformer blocks through system RAM — fitting on 8 GB VRAM — and keeps one long clip coherent in a **single pass**, no stitching needed.
 
-**Cloud (up to 60 s for Atlas, 30 s for Grok / Seedance, 120 s for ModelsLab)** — anything longer than a single provider segment (15 s for Grok, Seedance, and Atlas Wan 2.7, ~5 s for ModelsLab) is generated as multiple segments and stitched locally. For **Atlas and Grok**, each follow-up segment is generated **image-to-video from the previous segment's last frame** with a shared seed, so motion, characters, and look carry across the seam; if a frame handoff fails (upload block, input moderation) that segment automatically falls back to text-to-video instead of failing the job.
+**Cloud (up to 60 s for Atlas and Grok, 30 s for Seedance, 120 s for ModelsLab)** — anything longer than a single provider segment (15 s for Grok, Seedance, and Atlas Wan 2.7, ~5 s for ModelsLab) is generated as multiple segments and stitched locally. For **Atlas and Grok**, each follow-up segment is generated **image-to-video from the previous segment's last frame** with a shared seed, so motion, characters, and look carry across the seam; if a frame handoff fails (upload block, input moderation) that segment automatically falls back to text-to-video instead of failing the job.
 
-**Stitching & playback** — segments are joined with a **crossfade at every seam** (default 0.5 s, tune or disable with `IMAGINEAI_STITCH_OVERLAP_SECONDS`), which also swallows the duplicated frame that chaining introduces. Concat/crossfade and H.264 → VP9 webm transcoding (so Linux webkit2gtk webviews without an H.264 decoder can play inline) run through **PyAV in ComfyUI's Python environment**, with an **ffmpeg fallback** (xfade-based when clip durations can be probed) resolved from `IMAGINEAI_FFMPEG` / `FFMPEG_BINARY` / `FFMPEG`, your `PATH`, the bundled `node_modules/ffmpeg-static`, or common install locations.
+**Stitching & playback** — segments are joined with a **crossfade at every seam** (default 0.5 s, tune or disable with `IMAGINEAI_STITCH_OVERLAP_SECONDS`), which also swallows the duplicated frame that chaining introduces. The stitched master is a **high-quality H.264 mp4 that keeps the segments' audio** (equal-power crossfaded over the same window as the video; x264 CRF 16 / preset slow — tune with `IMAGINEAI_STITCH_MP4_CRF` / `IMAGINEAI_STITCH_MP4_PRESET`) and is what the download button serves. A **VP9 + Opus webm** is derived from it for inline playback (Linux webkit2gtk webviews usually lack an H.264 decoder). Everything runs through **PyAV in ComfyUI's Python environment**, with an **ffmpeg fallback** (xfade-based when clip durations can be probed, video-only) resolved from `IMAGINEAI_FFMPEG` / `FFMPEG_BINARY` / `FFMPEG`, your `PATH`, the bundled `node_modules/ffmpeg-static`, or common install locations.
 
 ## 🧠 Architecture
 
@@ -175,6 +175,8 @@ Secrets live in `data/secrets.json` with restrictive permissions where supported
 | `IMAGINEAI_WANVIDEO_STEPS` | `25` | WanVideoWrapper sampling steps (1–60) |
 | `IMAGINEAI_WANVIDEO_T5` | `umt5-xxl-enc-fp8_e4m3fn.safetensors` | kijai umt5 encoder (WanVideoWrapper rejects the Comfy fp8_scaled one) |
 | `IMAGINEAI_STITCH_OVERLAP_SECONDS` | `0.5` | Crossfade length at every segment seam when stitching (0–2 s; `0` = hard cut) |
+| `IMAGINEAI_STITCH_MP4_CRF` | `16` | x264 quality of the stitched mp4 master (lower = better, 0–51) |
+| `IMAGINEAI_STITCH_MP4_PRESET` | `slow` | x264 preset for the stitched mp4 master (`slow` = best quality per bit) |
 | `IMAGINEAI_FFMPEG` / `FFMPEG_BINARY` / `FFMPEG` | auto-detect | Explicit ffmpeg binary; otherwise `PATH`, bundled `ffmpeg-static`, or common install paths |
 
 ### Google Gemini

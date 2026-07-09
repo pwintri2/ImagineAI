@@ -25,7 +25,7 @@ class XaiTests(unittest.TestCase):
             }
 
         with patch.object(server, "xai_generate_video_clip", side_effect=fake_clip), \
-             patch.object(server, "concat_mp4_paths_to_webm", return_value=None):
+             patch.object(server, "stitch_video_paths", return_value=None):
             result = server.xai_generate_video(
                 "a long camera move", "wide", 20, "grok-imagine-video", "secret",
                 start_image="data:image/png;base64,abc",
