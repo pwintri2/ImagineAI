@@ -3876,6 +3876,9 @@ def run_video_job(job_id: str, payload: dict[str, Any]) -> None:
     prompt = str(payload.get("prompt", "")).strip()
     model = str(payload.get("model") or "wan22_14b")
     aspect = str(payload.get("aspect") or "wide")
+    print(f"[video-job {job_id[:8]}] model={model!r} seconds={payload.get('seconds')!r} "
+          f"aspect={aspect!r} startImages={len(payload.get('startImages') or [])} "
+          f"soundtrack={bool(str(payload.get('soundtrack') or '').strip())}", flush=True)
     negative_prompt = str(payload.get("negativePrompt") or "").strip()
     user_seed = payload.get("seed")
     base_w, base_h = ASPECT_TO_SIZE.get(aspect, (1280, 720))
