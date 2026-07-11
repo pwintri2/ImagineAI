@@ -111,3 +111,33 @@ input[type="text"], input[type="password"], input[type="url"], textarea, select 
 ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.15); }
 video { border-radius: inherit; }
 .range-violet { accent-color: #8b5cf6; }
+
+/* GPU battery indicator (header) */
+.gpu-battery {
+  position: relative;
+  width: 26px;
+  height: 12px;
+  border: 1.5px solid rgba(148, 163, 184, 0.7);
+  border-radius: 3px;
+}
+.gpu-battery::after {
+  content: '';
+  position: absolute;
+  right: -4.5px;
+  top: 2px;
+  width: 2.5px;
+  height: 5px;
+  background: rgba(148, 163, 184, 0.7);
+  border-radius: 0 1px 1px 0;
+}
+.gpu-battery-fill {
+  position: absolute;
+  left: 1px;
+  top: 1px;
+  bottom: 1px;
+  width: 0;
+  max-width: calc(100% - 2px);
+  border-radius: 1.5px;
+  background: #34d399;
+  transition: width 0.4s ease, background 0.4s ease;
+}

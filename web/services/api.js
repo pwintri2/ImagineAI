@@ -25,6 +25,8 @@ export const getSettings = () => getJson('/api/settings');
 export const saveSettings = (patch) => postJson('/api/settings', patch);
 export const getSecrets = () => getJson('/api/secrets');
 export const saveSecret = (provider, key) => postJson('/api/secrets', { provider, key });
+export const getGpu = () => getJson('/api/gpu');
+export const freeGpu = () => postJson('/api/gpu/free', {});
 
 export const startImageJob = (payload) => postJson('/api/generate/image', payload);
 export const startVideoJob = (payload) => postJson('/api/generate/video', payload);

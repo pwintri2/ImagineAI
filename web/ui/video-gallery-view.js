@@ -85,12 +85,14 @@ export function renderResults(videos, meta = {}) {
   galleryEl.innerHTML = `
     <div class="fade-in space-y-4">
       <div class="video-card group relative rounded-2xl overflow-hidden border border-white/10 bg-white/5 aspect-video">
-        <video id="generatedVideo" controls loop muted playsinline class="w-full h-full object-contain bg-black" preload="auto">
+        <video id="generatedVideo" controls loop playsinline class="w-full h-full object-contain bg-black" preload="auto">
           ${sourceTag(video.url)}
           ${video.mp4Url && video.mp4Url !== video.url ? sourceTag(video.mp4Url, 'video/mp4') : ''}
         </video>
       </div>
       <p id="videoPlaybackError" class="hidden rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-200"></p>
+      ${(video.soundtrackWarning || (video.stitchWarning && video.stitchStatus !== 'segments')) ? `
+      <p class="rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">${escapeHtml(video.soundtrackWarning || video.stitchWarning)}</p>` : ''}
       <div class="space-y-2 rounded-xl border border-white/10 bg-white/[0.03] p-3">
         <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-500" for="videoFileName">File name</label>
         <div class="flex gap-2">

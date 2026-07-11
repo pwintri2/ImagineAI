@@ -113,8 +113,8 @@ class SeedanceTests(unittest.TestCase):
     def test_long_seedance_video_is_stitched_from_valid_segments(self):
         calls = []
 
-        def fake_clip(prompt, aspect, seconds, model, key, on_progress=None):
-            calls.append((prompt, aspect, seconds, model, key))
+        def fake_clip(prompt, aspect, seconds, model, key, on_progress=None, seed=None):
+            calls.append((prompt, aspect, seconds, model, key, seed))
             index = len(calls)
             return {
                 "url": f"/api/local-media?name=seedance-segment{index}.webm",
@@ -125,14 +125,17 @@ class SeedanceTests(unittest.TestCase):
             }
 
         with patch.object(server, "seedance_generate_video_clip", side_effect=fake_clip), \
-             patch.object(server, "concat_mp4_paths_to_webm", return_value="/api/local-media?name=seedance-stitched.webm"):
-            result = server.seedance_generate_video("a long scene", "wide", 30, "seedance-2-0", "secret")
+             patch.object(server, "stitch_video_paths", return_value={"url": "/api/local-media?name=seedance-stitched.webm", "mp4Url": "/api/local-media?name=seedance-stitched.mp4"}):
+            result = server.seedance_generate_video("a long scene", "wide", 30, "seedance-2-0", "secret", seed=42)
 
         self.assertEqual(result["url"], "/api/local-media?name=seedance-stitched.webm")
+        self.assertEqual(result["mp4Url"], "/api/local-media?name=seedance-stitched.mp4")
         self.assertEqual(len(result["segments"]), 2)
         self.assertNotIn("mp4Path", result["segments"][0])
         self.assertEqual([call[2] for call in calls], [15, 15])
         self.assertIn("Segment 1 of 2", calls[0][0])
+        # The client seed reaches every segment so the look stays consistent.
+        self.assertEqual([call[5] for call in calls], [42, 42])
 
     def test_seedance_segment_lengths_keep_provider_minimum(self):
         self.assertEqual(server.seedance_video_segment_lengths(16), [12, 4])

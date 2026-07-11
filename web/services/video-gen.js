@@ -3,7 +3,7 @@ import { startVideoJob, pollJob } from './api.js';
 export const VIDEO_MODELS = {
   xai: {
     id: 'xai', title: 'Grok Imagine', subtitle: 'Cloud · xAI',
-    note: 'xAI text-to-video and image-to-video · uses your xAI quota', defaultSeconds: 5,
+    note: 'xAI text-to-video and image-to-video · up to 60s, chained + crossfaded with audio · uses your xAI quota', defaultSeconds: 5,
   },
   sdxl: {
     id: 'sdxl', title: 'Stable Diffusion Video', subtitle: 'Cloud · ModelsLab',
@@ -19,7 +19,19 @@ export const VIDEO_MODELS = {
   },
   atlas: {
     id: 'atlas', title: 'Atlas Video', subtitle: 'Cloud · Atlas Cloud',
-    note: 'Wan 2.7 through Atlas Cloud · up to 30s stitched locally', defaultSeconds: 5,
+    note: 'Wan 2.7 through Atlas Cloud · up to 60s, chained + crossfaded locally', defaultSeconds: 5,
+  },
+  veo: {
+    id: 'veo', title: 'Veo', subtitle: 'Cloud · Gemini API',
+    note: 'Google Veo 3.1 with native audio · uses your Gemini key · up to 60s, chained + crossfaded', defaultSeconds: 8,
+  },
+  director: {
+    id: 'director', title: 'Director', subtitle: 'Long film · cloud engines',
+    note: 'Up to 3 minutes · scenes across Atlas / Grok / Veo by content (never local Wan) · stops and asks you when every engine refuses a scene', defaultSeconds: 60,
+  },
+  sora: {
+    id: 'sora', title: 'Sora', subtitle: 'Cloud · OpenAI',
+    note: 'OpenAI Sora 2 with audio · native extensions up to 60s · API retires Sep 24, 2026', defaultSeconds: 8,
   },
   seedance: {
     id: 'seedance', title: 'Seedance 2.0', subtitle: 'Cloud · Seedance2',
@@ -48,8 +60,11 @@ export const VIDEO_MODELS = {
  * onProgress(job) is called on each poll tick. opts.onStart(jobId) fires once the
  * job is queued (so the caller can offer a cancel button); opts.timeoutMs caps the poll.
  */
-export async function generateVideo({ prompt, model, aspect, seconds, startImage, startImages, mergeStartImages }, onProgress, opts = {}) {
+export async function generateVideo({ prompt, model, aspect, seconds, startImage, startImages, mergeStartImages, negativePrompt, seed, soundtrack }, onProgress, opts = {}) {
   const images = Array.isArray(startImages) ? startImages : (startImage ? [startImage] : []);
+  // Clamp to the providers' 32-bit range; larger values would lose precision in
+  // the float parse and silently diverge from what the user typed.
+  const parsedSeed = Math.min(Number.parseInt(seed, 10), 2147483647);
   const { jobId } = await startVideoJob({
     prompt,
     model,
@@ -60,6 +75,11 @@ export async function generateVideo({ prompt, model, aspect, seconds, startImage
     startImages: images.map((img) => img.dataUrl),
     startImageNames: images.map((img) => img.name || ''),
     mergeStartImages: !!mergeStartImages && images.length > 1,
+    // Omit when empty so the backend keeps its own defaults (random seed,
+    // provider negative prompt, no soundtrack).
+    ...(negativePrompt ? { negativePrompt } : {}),
+    ...(Number.isFinite(parsedSeed) && parsedSeed >= 0 ? { seed: parsedSeed } : {}),
+    ...(soundtrack ? { soundtrack } : {}),
   });
   if (opts.onStart) opts.onStart(jobId);
   const job = await pollJob(jobId, { onTick: onProgress, timeoutMs: opts.timeoutMs });

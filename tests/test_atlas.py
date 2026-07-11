@@ -549,8 +549,10 @@ class AtlasTests(unittest.TestCase):
     def test_long_atlas_video_is_stitched_from_segments(self):
         calls = []
 
-        def fake_clip(prompt, aspect, seconds, model, key, start_image="", start_image_name="", on_progress=None):
-            calls.append((prompt, aspect, seconds, model, key, start_image, start_image_name))
+        def fake_clip(prompt, aspect, seconds, model, key, start_image="", start_image_name="", on_progress=None,
+                      negative_prompt="", seed=None, seed_pinned=False):
+            calls.append((prompt, aspect, seconds, model, key, start_image, start_image_name,
+                          negative_prompt, seed, seed_pinned))
             index = len(calls)
             return {
                 "url": f"/api/local-media?name=atlas-segment{index}.webm",
@@ -560,23 +562,114 @@ class AtlasTests(unittest.TestCase):
             }
 
         with patch.object(server, "atlas_generate_video_clip", side_effect=fake_clip), \
-             patch.object(server, "concat_mp4_paths_to_webm", return_value="/api/local-media?name=atlas-stitched.webm"):
+             patch.object(server, "extract_last_frame_to_data_url",
+                          return_value="data:image/png;base64,lastframe") as extract, \
+             patch.object(server, "stitch_video_paths", return_value={"url": "/api/local-media?name=atlas-stitched.webm", "mp4Url": "/api/local-media?name=atlas-stitched.mp4"}):
             result = server.atlas_generate_video(
                 "a long camera move", "wide", 30, "kling-v2.0", "secret",
                 start_image="data:image/png;base64,abc", start_image_name="start.png",
+                negative_prompt="blurry, watermark", seed=99,
         )
 
         self.assertEqual(result["url"], "/api/local-media?name=atlas-stitched.webm")
+        self.assertEqual(result["mp4Url"], "/api/local-media?name=atlas-stitched.mp4")
         self.assertEqual(len(result["segments"]), 2)
         self.assertNotIn("mp4Path", result["segments"][0])
         self.assertEqual([call[2] for call in calls], [15, 15])
         self.assertIn("Segment 1 of 2", calls[0][0])
         self.assertEqual(calls[0][5], "data:image/png;base64,abc")
         self.assertEqual(calls[0][6], "start.png")
-        self.assertEqual([call[5] for call in calls[1:]], [""])
+        # Segment 2 chains from segment 1's last frame instead of running blind.
+        extract.assert_called_once_with(Path("/tmp/atlas-segment1.mp4"))
+        self.assertEqual(calls[1][5], "data:image/png;base64,lastframe")
+        self.assertIn("final frame of the previous segment", calls[1][0])
+        # Client negative prompt and pinned seed reach every segment unchanged.
+        self.assertEqual([call[7] for call in calls], ["blurry, watermark"] * 2)
+        self.assertEqual([call[8] for call in calls], [99, 99])
+        self.assertEqual([call[9] for call in calls], [True, True])
+
+    def test_chained_atlas_segments_stay_in_the_same_model_family(self):
+        calls = []
+
+        def fake_clip(prompt, aspect, seconds, model, key, start_image="", start_image_name="", on_progress=None,
+                      negative_prompt="", seed=None, seed_pinned=False):
+            calls.append((model, bool(start_image), seconds))
+            index = len(calls)
+            return {"url": f"/x{index}.webm", "type": "video", "mp4Path": f"/tmp/atlas-fam{index}.mp4"}
+
+        # An env-overridden i2v model of another family must NOT hijack chained
+        # continuations: they flip only the t2v suffix within the same family.
+        with patch.object(server, "DEFAULT_ATLAS_I2V_MODEL", "kwaivgi/kling-v2.1/image-to-video"), \
+             patch.object(server, "atlas_generate_video_clip", side_effect=fake_clip), \
+             patch.object(server, "extract_last_frame_to_data_url", return_value="data:image/png;base64,f"), \
+             patch.object(server, "stitch_video_paths", return_value={"url": "/stitched.webm"}):
+            server.atlas_generate_video("a story", "wide", 30, "", "secret")
+
+        self.assertEqual(calls[0], (server.DEFAULT_ATLAS_VIDEO_MODEL, False, 15))
+        self.assertEqual(calls[1], ("alibaba/wan-2.7/image-to-video", True, 15))
+
+    def test_env_pinned_seed_stays_pinned_across_segments(self):
+        seeds = []
+
+        def fake_clip(prompt, aspect, seconds, model, key, start_image="", start_image_name="", on_progress=None,
+                      negative_prompt="", seed=None, seed_pinned=False):
+            seeds.append((seed, seed_pinned))
+            index = len(seeds)
+            return {"url": f"/x{index}.webm", "type": "video", "mp4Path": f"/tmp/atlas-env{index}.mp4"}
+
+        with patch.object(server, "DEFAULT_ATLAS_WAN27_SEED", "123"), \
+             patch.object(server, "atlas_generate_video_clip", side_effect=fake_clip), \
+             patch.object(server, "extract_last_frame_to_data_url", return_value=""), \
+             patch.object(server, "stitch_video_paths", return_value={"url": "/stitched.webm"}):
+            server.atlas_generate_video("a story", "wide", 30, "", "secret")
+
+        self.assertEqual(seeds, [(123, True), (123, True)])
+
+    def test_chained_segment_falls_back_to_unchained_on_handoff_failure(self):
+        calls = []
+
+        def fake_clip(prompt, aspect, seconds, model, key, start_image="", start_image_name="", on_progress=None,
+                      negative_prompt="", seed=None, seed_pinned=False):
+            calls.append((start_image, prompt))
+            if start_image:
+                raise server.AtlasHTTPError(403, "upload blocked by Cloudflare")
+            index = len(calls)
+            return {"url": f"/x{index}.webm", "type": "video", "mp4Path": f"/tmp/atlas-fb{index}.mp4"}
+
+        with patch.object(server, "atlas_generate_video_clip", side_effect=fake_clip), \
+             patch.object(server, "extract_last_frame_to_data_url", return_value="data:image/png;base64,f"), \
+             patch.object(server, "stitch_video_paths", return_value={"url": "/stitched.webm"}):
+            result = server.atlas_generate_video("a story", "wide", 30, "", "secret")
+
+        # Segment 2: chained attempt raised, unchained retry succeeded.
+        self.assertEqual(result["url"], "/stitched.webm")
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(calls[1][0], "data:image/png;base64,f")
+        self.assertEqual(calls[2][0], "")
+        self.assertNotIn("final frame of the previous segment", calls[2][1])
+
+    def test_long_atlas_video_shares_one_random_seed_across_segments(self):
+        seeds = []
+
+        def fake_clip(prompt, aspect, seconds, model, key, start_image="", start_image_name="", on_progress=None,
+                      negative_prompt="", seed=None, seed_pinned=False):
+            seeds.append((seed, seed_pinned))
+            index = len(seeds)
+            return {"url": f"/x{index}.webm", "type": "video", "mp4Path": f"/tmp/atlas-x{index}.mp4"}
+
+        with patch.object(server, "atlas_generate_video_clip", side_effect=fake_clip), \
+             patch.object(server, "extract_last_frame_to_data_url", return_value=""), \
+             patch.object(server, "stitch_video_paths", return_value={"url": "/stitched.webm"}):
+            server.atlas_generate_video("a long camera move", "wide", 30, "", "secret")
+
+        self.assertEqual(len(seeds), 2)
+        self.assertEqual(seeds[0], seeds[1])
+        self.assertGreaterEqual(seeds[0][0], 0)
+        self.assertFalse(seeds[0][1])  # shared for consistency, not pinned by the client
 
     def test_long_atlas_video_returns_segments_when_stitching_is_unavailable(self):
-        def fake_clip(prompt, aspect, seconds, model, key, start_image="", start_image_name="", on_progress=None):
+        def fake_clip(prompt, aspect, seconds, model, key, start_image="", start_image_name="", on_progress=None,
+                      negative_prompt="", seed=None, seed_pinned=False):
             index = 1 if seconds == 15 and start_image else 2
             return {
                 "url": f"/api/local-media?name=atlas-segment{index}.webm",
@@ -587,7 +680,7 @@ class AtlasTests(unittest.TestCase):
             }
 
         with patch.object(server, "atlas_generate_video_clip", side_effect=fake_clip), \
-             patch.object(server, "concat_mp4_paths_to_webm", return_value=None):
+             patch.object(server, "stitch_video_paths", return_value=None):
             result = server.atlas_generate_video(
                 "a long camera move", "wide", 30, "kling-v2.0", "secret",
                 start_image="data:image/png;base64,abc", start_image_name="start.png",

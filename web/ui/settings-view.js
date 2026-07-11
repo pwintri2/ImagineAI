@@ -102,18 +102,25 @@ function render() {
     </section>
 
     <section class="space-y-3">
-      <h3 class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Gemini API key (cloud image fallback)</h3>
-      <p class="text-[11px] text-slate-500">Stored locally on this machine (data/secrets.json, chmod 600). Used only for the Image tab's cloud engine.</p>
+      <h3 class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Gemini API key (cloud images + Veo video)</h3>
+      <p class="text-[11px] text-slate-500">Stored locally on this machine (data/secrets.json, chmod 600). One key powers the Image tab's Gemini engine and the Video tab's Veo model.</p>
       <div class="flex gap-2">
         <input id="geminiKeyInput" type="password" autocomplete="off" placeholder="${gem.configured ? 'Saved ' + escapeAttr(gem.hint || '') : 'AIza…'}"
           class="flex-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30" />
         <button id="saveGeminiKey" type="button" class="px-3 py-2 rounded-xl bg-violet-500/20 hover:bg-violet-500/30 border border-violet-500/30 text-violet-300 text-xs font-medium transition">Save</button>
       </div>
       ${gem.configured ? `<button id="clearGeminiKey" type="button" class="text-[11px] text-red-400/70 hover:text-red-400 transition">Remove saved key</button>` : ''}
-      <div class="space-y-1.5">
-        <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Gemini image model</label>
-        <input id="geminiModelInput" type="text" value="${escapeAttr(c.geminiModel || '')}" placeholder="gemini-2.5-flash-image"
-          class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30" />
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <div class="space-y-1.5">
+          <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Gemini image model</label>
+          <input id="geminiModelInput" type="text" value="${escapeAttr(c.geminiModel || '')}" placeholder="gemini-3.1-flash-image"
+            class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30" />
+        </div>
+        <div class="space-y-1.5">
+          <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Veo video model</label>
+          <input id="veoVideoModelInput" type="text" value="${escapeAttr(c.veoVideoModel || '')}" placeholder="veo-3.1-generate-preview"
+            class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30" />
+        </div>
       </div>
       <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener" class="text-[11px] text-violet-400/80 hover:text-violet-300 transition inline-block">Get a Google AI Studio key ↗</a>
     </section>
@@ -147,7 +154,7 @@ function render() {
         <h3 class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Other API keys</h3>
         <span class="text-[11px] text-slate-500">${otherProviders.length ? `${otherProviders.length} saved` : 'none saved'}</span>
       </div>
-      <p class="text-[11px] text-slate-500">Stored locally for supported providers and future helper scripts. Use <code class="text-slate-400">atlas</code> for Atlas Cloud; use <code class="text-slate-400">seedance</code> for Seedance2.ai; use <code class="text-slate-400">sdxl</code>, <code class="text-slate-400">modelslab</code>, <code class="text-slate-400">stable-diffusion-api</code>, <code class="text-slate-400">free-api</code>, <code class="text-slate-400">vrije-api</code>, or <code class="text-slate-400">wan2.6-t2v</code> for ModelsLab / Stable Diffusion API; use <code class="text-slate-400">stability</code> for Stability AI.</p>
+      <p class="text-[11px] text-slate-500">Stored locally for supported providers and future helper scripts. Use <code class="text-slate-400">atlas</code> for Atlas Cloud; use <code class="text-slate-400">seedance</code> for Seedance2.ai; use <code class="text-slate-400">sdxl</code>, <code class="text-slate-400">modelslab</code>, <code class="text-slate-400">stable-diffusion-api</code>, <code class="text-slate-400">free-api</code>, <code class="text-slate-400">vrije-api</code>, or <code class="text-slate-400">wan2.6-t2v</code> for ModelsLab / Stable Diffusion API; use <code class="text-slate-400">stability</code> for Stability AI; use <code class="text-slate-400">sora</code> or <code class="text-slate-400">openai</code> for Sora video; use <code class="text-slate-400">elevenlabs</code> for ElevenLabs soundtracks.</p>
       <div class="space-y-2">
         <input id="customProviderInput" type="text" autocomplete="off" placeholder="Provider name, e.g. seedance"
           class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30" />
@@ -193,6 +200,14 @@ function render() {
           <p class="text-[10px] text-slate-600">Use <code class="text-slate-400">seedance-2-0</code> or <code class="text-slate-400">seedance-2-0-fast</code>.</p>
         </div>
       ` : ''}
+      ${c.soraConfigured ? `
+        <div class="space-y-1.5">
+          <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Sora video model</label>
+          <input id="soraVideoModelInput" type="text" value="${escapeAttr(c.soraVideoModel || '')}" placeholder="sora-2"
+            class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30" />
+          <p class="text-[10px] text-slate-600">Use <code class="text-slate-400">sora-2</code> or <code class="text-slate-400">sora-2-pro</code>. Note: OpenAI retires the Sora API on September 24, 2026.</p>
+        </div>
+      ` : ''}
       ${c.stabilityConfigured ? `
         <div class="space-y-1.5">
           <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Stability image model</label>
@@ -236,6 +251,8 @@ function render() {
   document.getElementById('atlasImageModelInput')?.addEventListener('change', handleSaveAtlasImageModel);
   document.getElementById('atlasVideoModelInput')?.addEventListener('change', handleSaveAtlasVideoModel);
   document.getElementById('seedanceVideoModelInput')?.addEventListener('change', handleSaveSeedanceVideoModel);
+  document.getElementById('veoVideoModelInput')?.addEventListener('change', handleSaveVeoVideoModel);
+  document.getElementById('soraVideoModelInput')?.addEventListener('change', handleSaveSoraVideoModel);
   document.getElementById('stabilityImageModelInput')?.addEventListener('change', handleSaveStabilityImageModel);
   document.getElementById('modelslabImageModelInput')?.addEventListener('change', handleSaveModelslabImageModel);
   document.getElementById('modelslabVideoModelInput')?.addEventListener('change', handleSaveModelslabVideoModel);
@@ -393,6 +410,26 @@ async function handleSaveSeedanceVideoModel(e) {
   try {
     await saveSettings({ seedanceVideoModel: model });
     showToast('Seedance video model saved', 'success');
+    await refresh();
+  } catch (err) { showToast(err.message || 'Could not save', 'error'); }
+}
+
+async function handleSaveVeoVideoModel(e) {
+  const model = e.target.value.trim();
+  if (!model) return;
+  try {
+    await saveSettings({ veoVideoModel: model });
+    showToast('Veo video model saved', 'success');
+    await refresh();
+  } catch (err) { showToast(err.message || 'Could not save', 'error'); }
+}
+
+async function handleSaveSoraVideoModel(e) {
+  const model = e.target.value.trim();
+  if (!model) return;
+  try {
+    await saveSettings({ soraVideoModel: model });
+    showToast('Sora video model saved', 'success');
     await refresh();
   } catch (err) { showToast(err.message || 'Could not save', 'error'); }
 }

@@ -92,8 +92,9 @@ class ModelsLabTests(unittest.TestCase):
     def test_long_modelslab_video_is_stitched_from_segments(self):
         calls = []
 
-        def fake_clip(prompt, aspect, seconds, model, key, on_progress=None):
-            calls.append((prompt, aspect, seconds, model, key))
+        def fake_clip(prompt, aspect, seconds, model, key, on_progress=None,
+                      negative_prompt="", seed=None):
+            calls.append((prompt, aspect, seconds, model, key, negative_prompt, seed))
             index = len(calls)
             return {
                 "url": f"/api/local-media?name=segment{index}.webm",
@@ -103,20 +104,26 @@ class ModelsLabTests(unittest.TestCase):
             }
 
         with patch.object(server, "modelslab_generate_video_clip", side_effect=fake_clip), \
-             patch.object(server, "concat_mp4_paths_to_webm", return_value="/api/local-media?name=stitched.webm"):
-            result = server.modelslab_generate_video("a wave", "wide", 12, "wan2.2", "secret")
+             patch.object(server, "stitch_video_paths", return_value={"url": "/api/local-media?name=stitched.webm", "mp4Url": "/api/local-media?name=stitched.mp4"}):
+            result = server.modelslab_generate_video("a wave", "wide", 12, "wan2.2", "secret",
+                                                     negative_prompt="blurry, watermark", seed=7)
 
         self.assertEqual(result["url"], "/api/local-media?name=stitched.webm")
+        self.assertEqual(result["mp4Url"], "/api/local-media?name=stitched.mp4")
         self.assertEqual(len(result["segments"]), 3)
         self.assertNotIn("mp4Path", result["segments"][0])
         self.assertEqual([call[2] for call in calls], [5, 5, 2])
         self.assertIn("Segment 1 of 3", calls[0][0])
+        # Client negative prompt and seed reach every segment.
+        self.assertEqual([call[5] for call in calls], ["blurry, watermark"] * 3)
+        self.assertEqual([call[6] for call in calls], [7, 7, 7])
 
     def test_wan26_video_choice_uses_modelslab_model_id(self):
         calls = []
         job_id = server.make_job("video")
 
-        def fake_generate(prompt, aspect, seconds, model, key, on_progress=None):
+        def fake_generate(prompt, aspect, seconds, model, key, on_progress=None,
+                          negative_prompt="", seed=None):
             calls.append((prompt, aspect, seconds, model, key))
             return {"url": "/api/local-media?name=wan26.mp4", "type": "video"}
 
@@ -139,7 +146,8 @@ class ModelsLabTests(unittest.TestCase):
         calls = []
         job_id = server.make_job("video")
 
-        def fake_generate(prompt, aspect, seconds, model, key, on_progress=None):
+        def fake_generate(prompt, aspect, seconds, model, key, on_progress=None,
+                          negative_prompt="", seed=None):
             calls.append((prompt, aspect, seconds, model, key))
             return {"url": "/api/local-media?name=stable-diffusion.mp4", "type": "video"}
 
@@ -160,7 +168,8 @@ class ModelsLabTests(unittest.TestCase):
         self.assertEqual(job["meta"]["model"], "wan2.2")
 
     def test_long_modelslab_video_returns_segments_when_stitching_is_unavailable(self):
-        def fake_clip(prompt, aspect, seconds, model, key, on_progress=None):
+        def fake_clip(prompt, aspect, seconds, model, key, on_progress=None,
+                      negative_prompt="", seed=None):
             index = int(prompt.split("Segment ", 1)[1].split(" ", 1)[0])
             return {
                 "url": f"/api/local-media?name=modelslab-segment{index}.webm",
@@ -170,7 +179,7 @@ class ModelsLabTests(unittest.TestCase):
             }
 
         with patch.object(server, "modelslab_generate_video_clip", side_effect=fake_clip), \
-             patch.object(server, "concat_mp4_paths_to_webm", return_value=None):
+             patch.object(server, "stitch_video_paths", return_value=None):
             result = server.modelslab_generate_video("a wave", "wide", 12, "wan2.2", "secret")
 
         self.assertEqual(result["stitchStatus"], "segments")

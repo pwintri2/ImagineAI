@@ -56,6 +56,10 @@ python3 server.py --port 8799 --open
 
 - 🖥️ **Local-first generation** — images via ComfyUI's Z-Image Turbo or FLUX.1 Schnell FP8 workflows; video via Wan 2.2 14B, Wan 2.2 TI2V 5B, or Wan 2.1 1.3B
 - 🎬 **Long-form local video** — clips up to **120 s**, rendered as blocks and stitched locally, plus a WanVideoWrapper single-pass path
+- 🔗 **Seamless multi-segment cloud video** — Atlas, Grok, and Veo segments chain from the previous segment's last frame (image-to-video), share one seed, and every seam is crossfaded so the result flows as a single clip
+- 🎛️ **Advanced video controls** — a collapsible panel in the Video tab with a **negative prompt**, a **seed** field, and an **ElevenLabs soundtrack** prompt, wired through to the engines that support them
+- 🎧 **ElevenLabs soundtracks** — describe music or ambience and it is composed to match the video's length and mixed under any native audio (the video stream is remuxed untouched)
+- 🎭 **Director mode** — one film of up to **3 minutes**: the idea is planned as scenes (via Gemini when configured), each scene picks its engine by content — **Wan gets the artistic freedom, Grok tolerates a little, Veo handles the strictly-safe shots** — and everything chains and crossfades into a single clip
 - ✏️ **Reference-image editing** — upload an image in the Image tab and edit with local Z-Image, Gemini, Grok Imagine, or Atlas
 - 🎞️ **Multiple start images** — in the Video tab: Grok Imagine blends them into one clip; local Wan 2.2 travels through them as keyframes
 - ☁️ **Six optional cloud engines** — every key stored locally in `data/secrets.json`, never committed
@@ -72,8 +76,11 @@ python3 server.py --port 8799 --open
 | **FLUX.1 Schnell FP8** — local · ComfyUI | ✅ | — | — | — | — | — |
 | **Wan 2.1 / 2.2** — local · ComfyUI | — | ✅ | — | ✅ multiple → keyframes | 120 s stitched | — |
 | **Google Gemini** | ✅ | — | ✅ | — | — | `GEMINI_API_KEY` |
-| **xAI Grok Imagine** | ✅ | ✅ | ✅ | ✅ multiple → blended mix | 30 s (15 s per call, stitched) | `XAI_API_KEY` |
-| **Atlas Cloud** — Wan 2.7 / Seedream / Kling | ✅ | ✅ | ✅ via edit model | ✅ first image only | 30 s stitched | `ATLAS_API_KEY` |
+| **xAI Grok Imagine** | ✅ | ✅ | ✅ | ✅ multiple → blended mix | 60 s stitched (chained + crossfaded) | `XAI_API_KEY` |
+| **Atlas Cloud** — Wan 2.7 / Seedream / Kling | ✅ | ✅ | ✅ via edit model | ✅ first image only | 60 s stitched (chained + crossfaded) | `ATLAS_API_KEY` |
+| **Google Veo** — Veo 3.1 via the Gemini API | — | ✅ native audio | — | ✅ first image only | 60 s stitched (chained + crossfaded) | `GEMINI_API_KEY` |
+| **OpenAI Sora** — sora-2 / sora-2-pro | — | ✅ native audio | — | — | 60 s via native extensions | `OPENAI_API_KEY` |
+| **ElevenLabs** — soundtrack for any video | — | 🎧 music/ambience mixed in | — | — | up to 10 min composed | `ELEVENLABS_API_KEY` |
 | **Seedance2.ai** | 🟡 still frames | ✅ | — | — | 30 s (15 s per call, stitched) | `SEEDANCE_API_KEY` |
 | **ModelsLab / Stable Diffusion API** | ✅ | ✅ `wan2.2` / `wan2.6-t2v` | — | — | 120 s (~5 s segments, stitched) | `MODELSLAB_API_KEY` |
 | **Stability AI** — `core` / `sd3` / `ultra` | ✅ | — | — | — | — | `STABILITY_API_KEY` |
@@ -91,9 +98,13 @@ python3 server.py --port 8799 --open
 1. **Block renderer** — the clip is generated as short blocks; a lossless PNG of each block's last frame (grabbed inside ComfyUI, *before* H.264 compression) seeds the next block as image-to-video, so continuity holds without artifacts compounding into mush. Blocks that hit an out-of-memory error are automatically retried at a smaller length, then everything is stitched into one file.
 2. **WanVideoWrapper path** — if kijai's WanVideoWrapper custom node (plus its umt5 encoder) is installed, the Wan 2.2 TI2V 5B model runs with block-swap streaming transformer blocks through system RAM — fitting on 8 GB VRAM — and keeps one long clip coherent in a **single pass**, no stitching needed.
 
-**Cloud (up to 30 s in the UI for Grok / Atlas / Seedance, 120 s for ModelsLab)** — anything longer than a single provider segment (15 s for Grok and Seedance, 10–15 s for Atlas, ~5 s for ModelsLab) is generated as multiple segments and stitched locally.
+**Cloud (up to 60 s for Atlas, Grok, Veo, and Sora, 30 s for Seedance, 120 s for ModelsLab)** — anything longer than a single provider segment (15 s for Grok, Seedance, and Atlas Wan 2.7, 8 s for Veo, ~5 s for ModelsLab) is generated as multiple segments and stitched locally. For **Atlas, Grok, and Veo**, each follow-up segment is generated **image-to-video from the previous segment's last frame** with a shared seed, so motion, characters, and look carry across the seam; if a frame handoff fails (upload block, input moderation) that segment automatically falls back to text-to-video instead of failing the job. **Sora** uses its native extensions API instead (no local stitching needed for the common case). **Veo and Sora generate audio natively**, and the audio crossfades along with the video when stitching. Note: OpenAI has announced the Sora API retires on **September 24, 2026**.
 
-**Stitching & playback** — segment concat and H.264 → VP9 webm transcoding (so Linux webkit2gtk webviews without an H.264 decoder can play inline) run through **PyAV in ComfyUI's Python environment**, with an **ffmpeg fallback** resolved from `IMAGINEAI_FFMPEG` / `FFMPEG_BINARY` / `FFMPEG`, your `PATH`, the bundled `node_modules/ffmpeg-static`, or common install locations.
+**Director mode (up to 3 minutes)** — the 🎭 Director model plans your idea as consecutive scenes (Gemini writes the scene prompts and tags each one `safe`/`mild`/`free` when a key is configured; a keyword heuristic acts as a floor either way). Each scene is routed to a **cloud engine** by that tag: **free/artistic scenes go to Atlas' Wan 2.7** (the most permissive), **mild ones to Grok**, and **safe ones to Veo** (best quality, strictest filter). The Director **never renders on local Wan** — if every available engine refuses a scene, the job stops with the scene prompt so you can render that part yourself with the model of your choice (the local Wan chips have no content filter). Scenes chain from each other's last frame — even across engines — with an unchained retry per engine before falling through to the next. Everything is stitched into one crossfaded film with audio, tunable via `IMAGINEAI_DIRECTOR_MAX_SECONDS` and `IMAGINEAI_DIRECTOR_PLANNER_MODEL`.
+
+**Soundtracks (ElevenLabs)** — with an `elevenlabs` key saved, the Video tab's Advanced panel gains a soundtrack prompt. After any video finishes (cloud or local), ImagineAI composes matching music/ambience via the Eleven Music API (falling back to the sound-effects endpoint on free plans, looped to length), and mixes it into the mp4 master: original audio stays on top, the music sits under it as a bed, and the video stream is remuxed untouched. A failed soundtrack never fails the video job.
+
+**Stitching & playback** — segments are joined with a **crossfade at every seam** (default 0.5 s, tune or disable with `IMAGINEAI_STITCH_OVERLAP_SECONDS`), which also swallows the duplicated frame that chaining introduces. The stitched master is a **high-quality H.264 mp4 that keeps the segments' audio** (equal-power crossfaded over the same window as the video; x264 CRF 16 / preset slow — tune with `IMAGINEAI_STITCH_MP4_CRF` / `IMAGINEAI_STITCH_MP4_PRESET`) and is what the download button serves. A **VP9 + Opus webm** is derived from it for inline playback (Linux webkit2gtk webviews usually lack an H.264 decoder). Everything runs through **PyAV in ComfyUI's Python environment**, with an **ffmpeg fallback** (xfade-based when clip durations can be probed, video-only) resolved from `IMAGINEAI_FFMPEG` / `FFMPEG_BINARY` / `FFMPEG`, your `PATH`, the bundled `node_modules/ffmpeg-static`, or common install locations.
 
 ## 🧠 Architecture
 
@@ -172,6 +183,13 @@ Secrets live in `data/secrets.json` with restrictive permissions where supported
 | `IMAGINEAI_WANVIDEO_BLOCK_SWAP` | `20` | WanVideoWrapper block-swap depth (0–40) |
 | `IMAGINEAI_WANVIDEO_STEPS` | `25` | WanVideoWrapper sampling steps (1–60) |
 | `IMAGINEAI_WANVIDEO_T5` | `umt5-xxl-enc-fp8_e4m3fn.safetensors` | kijai umt5 encoder (WanVideoWrapper rejects the Comfy fp8_scaled one) |
+| `IMAGINEAI_STITCH_OVERLAP_SECONDS` | `0.5` | Crossfade length at every segment seam when stitching (0–2 s; `0` = hard cut) |
+| `IMAGINEAI_STITCH_MP4_CRF` | `16` | x264 quality of the stitched mp4 master (lower = better, 0–51) |
+| `IMAGINEAI_STITCH_MP4_PRESET` | `slow` | x264 preset for the stitched mp4 master (`slow` = best quality per bit) |
+| `VEO_VIDEO_MODEL` | `veo-3.1-generate-preview` | Veo model on the Gemini API (`-fast-` / `-lite-` variants are cheaper) |
+| `VEO_RESOLUTION` | `720p` | Veo output resolution (`1080p`/`4k` need 8 s segments) |
+| `SORA_VIDEO_MODEL` | `sora-2` | Sora model (`sora-2-pro` for higher quality) — API retires Sep 24, 2026 |
+| `ELEVENLABS_MUSIC_MODEL` | server default | Optional Eleven Music model override (e.g. `music_v2`) |
 | `IMAGINEAI_FFMPEG` / `FFMPEG_BINARY` / `FFMPEG` | auto-detect | Explicit ffmpeg binary; otherwise `PATH`, bundled `ffmpeg-static`, or common install paths |
 
 ### Google Gemini

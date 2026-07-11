@@ -1,5 +1,11 @@
 import { getState, setState } from '../state.js';
 import { VIDEO_MODELS } from '../services/video-gen.js';
+import {
+  LOCAL_VIDEO_MODELS,
+  MODELSLAB_VIDEO_MODELS,
+  STABLE_DIFFUSION_VIDEO_MODELS,
+  isVideoModelAvailable,
+} from '../services/video-model-routing.js';
 
 const SUGGESTIONS = [
   'a paper boat drifting down a rain-soaked street, slow dolly shot',
@@ -14,8 +20,6 @@ const RATIOS = [
   { key: 'portrait', label: '3:4' },
   { key: 'tall', label: '9:16' },
 ];
-const STABLE_DIFFUSION_VIDEO_MODELS = ['sdxl', 'stable-diffusion-api'];
-const MODELSLAB_VIDEO_MODELS = [...STABLE_DIFFUSION_VIDEO_MODELS, 'wan2.6-t2v'];
 
 let section;
 let promptInput;
@@ -30,12 +34,23 @@ function chip(label, value, group, active, disabled = false) {
   return `<button type="button" ${disabled ? 'disabled' : ''} class="vchip px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${disabled ? '' : 'cursor-pointer'} whitespace-nowrap ${base}" data-group="${group}" data-value="${value}">${label}</button>`;
 }
 
-const LOCAL_WAN_MODELS = ['wanvideo_5b', 'wan22_14b', 'wan22_ti2v_5b', 'wan21_1_3b'];
+// Which engines actually consume the Advanced fields; the others ignore them
+// server-side, so the UI must not promise what the engine drops.
+export function supportsNegativePrompt(model) {
+  return ['atlas', 'veo', 'director'].includes(model)
+    || MODELSLAB_VIDEO_MODELS.includes(model) || LOCAL_VIDEO_MODELS.includes(model);
+}
+export function supportsSeed(model) {
+  return ['atlas', 'veo', 'seedance', 'director'].includes(model)
+    || MODELSLAB_VIDEO_MODELS.includes(model) || LOCAL_VIDEO_MODELS.includes(model);
+}
 
 function maxSecondsForModel(model) {
-  if (['xai', 'atlas', 'seedance'].includes(model)) return 30;
+  if (model === 'director') return 180;   // long film: scenes across engines, chained + crossfaded
+  if (['atlas', 'xai', 'veo', 'sora'].includes(model)) return 60;   // segments, chained + crossfaded locally (Sora extends natively)
+  if (model === 'seedance') return 30;
   if (MODELSLAB_VIDEO_MODELS.includes(model)) return 120;   // cloud, stitched — no local VRAM used
-  if (LOCAL_WAN_MODELS.includes(model)) return 120;   // rendered in ~10s blocks, stitched together
+  if (LOCAL_VIDEO_MODELS.includes(model)) return 120;   // rendered in ~10s blocks, stitched together
   return 5;
 }
 
@@ -47,12 +62,7 @@ export function init() {
 }
 
 function modelAvailable(id) {
-  const { config } = getState();
-  if (id === 'xai') return !!config.xaiConfigured;
-  if (id === 'atlas') return !!config.atlasConfigured;
-  if (id === 'seedance') return !!config.seedanceConfigured;
-  if (MODELSLAB_VIDEO_MODELS.includes(id)) return !!config.modelslabConfigured;
-  return !!(config.comfyReachable && config.models?.video?.[id]);
+  return isVideoModelAvailable(id, getState().config);
 }
 
 function isStableDiffusionVideo(model) {
@@ -68,6 +78,9 @@ export function render() {
   const wan21Ok = modelAvailable('wan21_1_3b');
   const xaiOk = modelAvailable('xai');
   const atlasOk = modelAvailable('atlas');
+  const veoOk = modelAvailable('veo');
+  const soraOk = modelAvailable('sora');
+  const directorOk = modelAvailable('director');
   const seedanceOk = modelAvailable('seedance');
   const stableDiffusionOk = modelAvailable('stable-diffusion-api');
   const showModelslab = !!s.config.modelslabConfigured;
@@ -76,6 +89,12 @@ export function render() {
   const imageError = s._draftVideoStartImageError || '';
   const maxSeconds = maxSecondsForModel(s.videoModel);
   const selectedSeconds = Math.min(s.videoSeconds, maxSeconds);
+  const negOk = supportsNegativePrompt(s.videoModel);
+  const seedOk = supportsSeed(s.videoModel);
+  const soundtrackOk = !!s.config.elevenlabsConfigured;
+  // Remember the user's toggle across re-renders; first render opens the panel
+  // only when it already holds values.
+  const advancedOpen = s._draftVideoAdvancedOpen ?? !!(s.videoNegativePrompt || s.videoSeed || s.videoSoundtrack);
 
   section.innerHTML = `
     <div class="space-y-4">
@@ -95,6 +114,9 @@ export function render() {
         <div id="modelChips" class="flex flex-wrap gap-1.5">
           ${chip(`𝕏 ${VIDEO_MODELS.xai.title}`, 'xai', 'model', s.videoModel === 'xai', !xaiOk)}
           ${chip(`◆ ${VIDEO_MODELS.atlas.title}`, 'atlas', 'model', s.videoModel === 'atlas', !atlasOk)}
+          ${chip(`▲ ${VIDEO_MODELS.veo.title}`, 'veo', 'model', s.videoModel === 'veo', !veoOk)}
+          ${chip(`● ${VIDEO_MODELS.sora.title}`, 'sora', 'model', s.videoModel === 'sora', !soraOk)}
+          ${chip(`🎭 ${VIDEO_MODELS.director.title}`, 'director', 'model', s.videoModel === 'director', !directorOk)}
           ${chip(`◈ ${VIDEO_MODELS.seedance.title}`, 'seedance', 'model', s.videoModel === 'seedance', !seedanceOk)}
           ${chip(`▣ ${VIDEO_MODELS['stable-diffusion-api'].title}`, 'stable-diffusion-api', 'model', isStableDiffusionVideo(s.videoModel), !stableDiffusionOk)}
           ${showModelslab ? chip(`▣ ${VIDEO_MODELS['wan2.6-t2v'].title}`, 'wan2.6-t2v', 'model', s.videoModel === 'wan2.6-t2v', !modelAvailable('wan2.6-t2v')) : ''}
@@ -151,12 +173,43 @@ export function render() {
         </div>
       </div>
 
+      <details id="videoAdvanced" class="group"${advancedOpen ? ' open' : ''}>
+        <summary class="text-[10px] font-semibold uppercase tracking-wider text-slate-500 cursor-pointer hover:text-slate-400 transition flex items-center gap-1 select-none">
+          <span class="group-open:rotate-90 transition-transform text-[8px]">▶</span> Advanced
+        </summary>
+        <div class="mt-3 grid grid-cols-1 sm:grid-cols-[1fr_140px] gap-2">
+          <div class="space-y-1.5${negOk ? '' : ' opacity-50'}">
+            <label for="videoNegativeInput" class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Negative prompt</label>
+            <textarea id="videoNegativeInput" rows="2" ${negOk ? '' : 'disabled'}
+              class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30 resize-none"
+              placeholder="What to avoid… e.g. blurry, watermark, text, deformed hands">${escapeHtml(s.videoNegativePrompt || '')}</textarea>
+            ${negOk ? '' : `<p class="text-[10px] text-slate-600">${escapeHtml(VIDEO_MODELS[s.videoModel]?.title || s.videoModel)} does not support a negative prompt.</p>`}
+          </div>
+          <div class="space-y-1.5${seedOk ? '' : ' opacity-50'}">
+            <label for="videoSeedInput" class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Seed</label>
+            <input id="videoSeedInput" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="10" value="${escapeAttr(s.videoSeed || '')}" ${seedOk ? '' : 'disabled'}
+              class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30"
+              placeholder="random">
+            <p class="text-[10px] text-slate-600">${seedOk ? 'Same seed + prompt repeats a look.' : `Not supported by ${escapeHtml(VIDEO_MODELS[s.videoModel]?.title || s.videoModel)}.`}</p>
+          </div>
+        </div>
+        <div class="mt-2 space-y-1.5${soundtrackOk ? '' : ' opacity-50'}">
+          <label for="videoSoundtrackInput" class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Soundtrack · ElevenLabs</label>
+          <textarea id="videoSoundtrackInput" rows="2" ${soundtrackOk ? '' : 'disabled'}
+            class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30 resize-none"
+            placeholder="Describe music or ambience… e.g. dreamy ambient synth, slow build, no drums">${escapeHtml(s.videoSoundtrack || '')}</textarea>
+          <p class="text-[10px] text-slate-600">${soundtrackOk
+            ? 'Composed to match the video length and mixed under any native audio.'
+            : 'Add an ElevenLabs key in Settings as elevenlabs to enable soundtracks.'}</p>
+        </div>
+      </details>
+
       <button id="videoGenerateBtn" type="button"
         class="btn-generate btn-video w-full rounded-2xl px-6 py-3.5 text-base font-semibold text-white flex items-center justify-center gap-2">
         <span id="videoBtnIcon">🎬</span><span id="videoBtnText">Create Video</span>
       </button>
 
-      <p class="text-center text-[11px] text-slate-600">${videoHint(s, wanVideoOk || wan22Ok || wanTi2vOk || wan21Ok || xaiOk || atlasOk || seedanceOk || stableDiffusionOk)}</p>
+      <p class="text-center text-[11px] text-slate-600">${videoHint(s, wanVideoOk || wan22Ok || wanTi2vOk || wan21Ok || xaiOk || atlasOk || veoOk || soraOk || directorOk || seedanceOk || stableDiffusionOk)}</p>
     </div>
   `;
 
@@ -167,17 +220,45 @@ export function render() {
     document.getElementById('secOut').textContent = `${range.value}s`;
     setState({ videoSeconds: parseInt(range.value, 10) });
   });
+  // Write-through to persisted state without re-rendering, so typing keeps focus.
+  document.getElementById('videoNegativeInput')?.addEventListener('input', (e) => {
+    setState({ videoNegativePrompt: e.target.value });
+  });
+  document.getElementById('videoSeedInput')?.addEventListener('input', (e) => {
+    const digits = e.target.value.replace(/[^0-9]/g, '');
+    if (digits !== e.target.value) e.target.value = digits;
+    setState({ videoSeed: digits });
+  });
+  document.getElementById('videoSoundtrackInput')?.addEventListener('input', (e) => {
+    setState({ videoSoundtrack: e.target.value });
+  });
+  const advanced = document.getElementById('videoAdvanced');
+  advanced?.addEventListener('toggle', () => {
+    getState()._draftVideoAdvancedOpen = advanced.open;
+  });
   startImageInput?.addEventListener('change', handleStartImageChange);
 }
 
 function videoHint(s, anyModel) {
   if (s.videoModel === 'xai') {
     if (!s.config.xaiConfigured) return 'Add an xAI key in Settings to generate Grok videos.';
-    return 'Grok Imagine supports up to 15s per API call; 16-30s is stitched locally from multiple Grok segments.';
+    return 'Grok Imagine supports up to 15s per API call; 16-60s is stitched locally — each segment continues from the previous one\'s last frame, and video and audio crossfade at the seams.';
   }
   if (s.videoModel === 'atlas') {
     if (!s.config.atlasConfigured) return 'Add an Atlas key in Settings as atlas to generate Atlas videos.';
-    return `Atlas Cloud video via ${escapeHtml(s.config.atlasVideoModel || 'alibaba/wan-2.7/text-to-video')} · 16-30s is stitched locally from multiple Wan 2.7 segments.`;
+    return `Atlas Cloud video via ${escapeHtml(s.config.atlasVideoModel || 'alibaba/wan-2.7/text-to-video')} · 16-60s is stitched locally: each segment continues from the previous one's last frame and the seams are crossfaded.`;
+  }
+  if (s.videoModel === 'veo') {
+    if (!s.config.geminiConfigured) return 'Add a Gemini key in Settings to generate Veo videos (same key as Gemini images).';
+    return `Google Veo via ${escapeHtml(s.config.veoVideoModel || 'veo-3.1-generate-preview')} · native audio · 10-60s is stitched locally: segments chain from the previous last frame and crossfade at the seams.`;
+  }
+  if (s.videoModel === 'sora') {
+    if (!s.config.soraConfigured) return 'Add an OpenAI key in Settings as sora or openai to generate Sora videos.';
+    return `OpenAI Sora via ${escapeHtml(s.config.soraVideoModel || 'sora-2')} · audio included · longer clips use Sora's native extensions. Note: OpenAI retires this API on September 24, 2026.`;
+  }
+  if (s.videoModel === 'director') {
+    if (!modelAvailable('director')) return 'Director needs at least one cloud engine key: Atlas, xAI (Grok), or Gemini (Veo).';
+    return 'Plans your idea as scenes (via Gemini when configured) and picks a cloud engine per scene by content — Atlas Wan 2.7 for the artistic scenes, Grok for the mildly edgy ones, Veo for the safe ones. Never uses local Wan: if every engine refuses a scene, the job stops and tells you, so you can render that part with the model of your choice. Scenes chain and crossfade (video + audio) into one film of up to 3 minutes.';
   }
   if (s.videoModel === 'seedance') {
     if (!s.config.seedanceConfigured) return 'Add a Seedance key in Settings as seedance to generate Seedance videos.';
@@ -247,7 +328,7 @@ function rememberDraft() {
 }
 
 const MAX_START_IMAGES = 8;
-const START_IMAGE_MODELS = ['wan22_ti2v_5b', 'wan22_14b', 'xai', 'atlas'];
+const START_IMAGE_MODELS = ['wan22_ti2v_5b', 'wan22_14b', 'xai', 'atlas', 'veo', 'director'];
 
 async function handleStartImageChange() {
   const files = Array.from(startImageInput?.files || []);
@@ -284,7 +365,7 @@ function readFileAsDataURL(file) {
 
 function startImagesLabel(images) {
   if (!images.length) {
-    return 'Optional. Add one or more images. Grok mixes multiple images into one clip; local Wan 2.2 TI2V/14B travels through them as keyframes; Atlas uses the first only.';
+    return 'Optional. Add one or more images. Grok mixes multiple images into one clip; local Wan 2.2 TI2V/14B travels through them as keyframes; Atlas and Veo use the first only.';
   }
   if (images.length === 1) return `1 start frame · ${formatBytes(images[0].size)}`;
   return `${images.length} images · Grok blends them; local Wan uses them as keyframes in order.`;
