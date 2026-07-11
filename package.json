@@ -7,7 +7,8 @@
   "scripts": {
     "tauri": "tauri",
     "desktop:dev": "tauri dev",
-    "desktop:build": "tauri build"
+    "desktop:build": "tauri build",
+    "test:web": "node --experimental-default-type=module --test tests/test_web_helpers.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0"

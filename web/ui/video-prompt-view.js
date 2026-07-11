@@ -1,5 +1,11 @@
 import { getState, setState } from '../state.js';
 import { VIDEO_MODELS } from '../services/video-gen.js';
+import {
+  LOCAL_VIDEO_MODELS,
+  MODELSLAB_VIDEO_MODELS,
+  STABLE_DIFFUSION_VIDEO_MODELS,
+  isVideoModelAvailable,
+} from '../services/video-model-routing.js';
 
 const SUGGESTIONS = [
   'a paper boat drifting down a rain-soaked street, slow dolly shot',
@@ -14,8 +20,6 @@ const RATIOS = [
   { key: 'portrait', label: '3:4' },
   { key: 'tall', label: '9:16' },
 ];
-const STABLE_DIFFUSION_VIDEO_MODELS = ['sdxl', 'stable-diffusion-api'];
-const MODELSLAB_VIDEO_MODELS = [...STABLE_DIFFUSION_VIDEO_MODELS, 'wan2.6-t2v'];
 
 let section;
 let promptInput;
@@ -30,17 +34,15 @@ function chip(label, value, group, active, disabled = false) {
   return `<button type="button" ${disabled ? 'disabled' : ''} class="vchip px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${disabled ? '' : 'cursor-pointer'} whitespace-nowrap ${base}" data-group="${group}" data-value="${value}">${label}</button>`;
 }
 
-const LOCAL_WAN_MODELS = ['wanvideo_5b', 'wan22_14b', 'wan22_ti2v_5b', 'wan21_1_3b'];
-
 // Which engines actually consume the Advanced fields; the others ignore them
 // server-side, so the UI must not promise what the engine drops.
 export function supportsNegativePrompt(model) {
   return ['atlas', 'veo', 'director'].includes(model)
-    || MODELSLAB_VIDEO_MODELS.includes(model) || LOCAL_WAN_MODELS.includes(model);
+    || MODELSLAB_VIDEO_MODELS.includes(model) || LOCAL_VIDEO_MODELS.includes(model);
 }
 export function supportsSeed(model) {
   return ['atlas', 'veo', 'seedance', 'director'].includes(model)
-    || MODELSLAB_VIDEO_MODELS.includes(model) || LOCAL_WAN_MODELS.includes(model);
+    || MODELSLAB_VIDEO_MODELS.includes(model) || LOCAL_VIDEO_MODELS.includes(model);
 }
 
 function maxSecondsForModel(model) {
@@ -48,7 +50,7 @@ function maxSecondsForModel(model) {
   if (['atlas', 'xai', 'veo', 'sora'].includes(model)) return 60;   // segments, chained + crossfaded locally (Sora extends natively)
   if (model === 'seedance') return 30;
   if (MODELSLAB_VIDEO_MODELS.includes(model)) return 120;   // cloud, stitched — no local VRAM used
-  if (LOCAL_WAN_MODELS.includes(model)) return 120;   // rendered in ~10s blocks, stitched together
+  if (LOCAL_VIDEO_MODELS.includes(model)) return 120;   // rendered in ~10s blocks, stitched together
   return 5;
 }
 
@@ -60,18 +62,7 @@ export function init() {
 }
 
 function modelAvailable(id) {
-  const { config } = getState();
-  if (id === 'xai') return !!config.xaiConfigured;
-  if (id === 'atlas') return !!config.atlasConfigured;
-  if (id === 'veo') return !!config.geminiConfigured;
-  if (id === 'sora') return !!config.soraConfigured;
-  if (id === 'seedance') return !!config.seedanceConfigured;
-  if (id === 'director') {
-    // Cloud engines only — Director never renders on local Wan.
-    return !!(config.atlasConfigured || config.xaiConfigured || config.geminiConfigured);
-  }
-  if (MODELSLAB_VIDEO_MODELS.includes(id)) return !!config.modelslabConfigured;
-  return !!(config.comfyReachable && config.models?.video?.[id]);
+  return isVideoModelAvailable(id, getState().config);
 }
 
 function isStableDiffusionVideo(model) {

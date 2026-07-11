@@ -3,8 +3,15 @@ import {
   saveHistoryEntry, saveVideoHistoryEntry,
 } from './state.js';
 import { getConfig, cancelJob, getGpu, freeGpu } from './services/api.js';
-import { generateImage } from './services/image-gen.js';
+import { ENGINES, generateImage } from './services/image-gen.js';
 import { generateVideo } from './services/video-gen.js';
+import { friendlyError } from './services/friendly-error.js';
+import {
+  MODELSLAB_VIDEO_MODELS,
+  STABLE_DIFFUSION_VIDEO_MODELS,
+  isLocalVideoModel,
+  reconcileVideoModel,
+} from './services/video-model-routing.js';
 import * as PromptView from './ui/prompt-view.js';
 import * as GalleryView from './ui/gallery-view.js';
 import * as VideoPromptView from './ui/video-prompt-view.js';
@@ -110,9 +117,6 @@ function availabilityKey(config) {
   });
 }
 
-const MODELSLAB_VIDEO_MODELS = ['sdxl', 'stable-diffusion-api', 'wan2.6-t2v'];
-const STABLE_DIFFUSION_VIDEO_MODELS = ['sdxl', 'stable-diffusion-api'];
-
 async function refreshConfig(force) {
   if (configInFlight) return;
   configInFlight = true;
@@ -157,7 +161,6 @@ function reconcileEngine(config) {
   const xai = !!config.xaiConfigured;
   const atlas = !!config.atlasConfigured;
   const sdxl = !!(config.sdxlConfigured || config.stabilityConfigured);
-  const modelslab = !!config.modelslabConfigured;
   const seedance = !!config.seedanceConfigured;
   let engine = s.imageEngine;
   const localFallback = localImg ? 'local' : (fluxImg ? 'flux' : '');
@@ -170,21 +173,7 @@ function reconcileEngine(config) {
   if (engine === 'seedance' && !seedance) engine = localFallback || (xai ? 'xai' : (atlas ? 'atlas' : (sdxl ? 'sdxl' : (gemini ? 'gemini' : engine))));
   if (engine !== s.imageEngine) setState({ imageEngine: engine });
 
-  let vModel = s.videoModel;
-  const v = config.models?.video || {};
-  const selectedVideoAvailable = vModel === 'xai'
-    ? xai
-    : (vModel === 'atlas' ? atlas : (vModel === 'seedance' ? seedance : (MODELSLAB_VIDEO_MODELS.includes(vModel) ? modelslab : !!v[vModel])));
-  if (!selectedVideoAvailable) {
-    if (v.wan22_14b) vModel = 'wan22_14b';
-    else if (v.wan22_ti2v_5b) vModel = 'wan22_ti2v_5b';
-    else if (v.wan21_1_3b) vModel = 'wan21_1_3b';
-    else if (xai) vModel = 'xai';
-    else if (atlas) vModel = 'atlas';
-    else if (seedance) vModel = 'seedance';
-    else if (modelslab) vModel = 'stable-diffusion-api';
-    else vModel = '';
-  }
+  const vModel = reconcileVideoModel(s.videoModel, config);
   if (vModel !== s.videoModel) setState({ videoModel: vModel });
 }
 
@@ -257,8 +246,12 @@ async function handleGenerateImage() {
     saveHistoryEntry({ prompt, modelTitle, images: results, sourceImageName: sourceImage?.name || '', createdAt: Date.now() });
   } catch (err) {
     console.error('Image generation failed:', err);
-    GalleryView.renderError(friendlyError(err));
-    showToast(friendlyError(err), 'error');
+    const message = friendlyError(err, {
+      usesLocalGpu: ['local', 'flux'].includes(engine),
+      providerLabel: ENGINES[engine]?.title || engine,
+    });
+    GalleryView.renderError(message);
+    showToast(message, 'error');
   } finally {
     setState({ isGenerating: false });
     PromptView.setGenerating(false);
@@ -312,7 +305,7 @@ async function handleGenerateVideo() {
   }
 
   const seconds = videoSecondsForModel(model, s.videoSeconds);
-  const isLocalModel = ['wanvideo_5b', 'wan22_14b', 'wan22_ti2v_5b', 'wan21_1_3b'].includes(model);
+  const isLocalModel = isLocalVideoModel(model);
   let currentJobId = null;
   setState({ isGeneratingVideo: true });
   VideoPromptView.setGenerating(true);
@@ -361,8 +354,12 @@ async function handleGenerateVideo() {
     }
   } catch (err) {
     console.error('Video generation failed:', err);
-    VideoGalleryView.renderError(friendlyError(err));
-    showToast(friendlyError(err), 'error');
+    const message = friendlyError(err, {
+      usesLocalGpu: isLocalModel,
+      providerLabel: videoModelTitle(model),
+    });
+    VideoGalleryView.renderError(message);
+    showToast(message, 'error');
   } finally {
     setState({ isGeneratingVideo: false });
     VideoPromptView.setGenerating(false);
@@ -388,7 +385,7 @@ function videoSecondsForModel(model, seconds) {
   const parsed = Number.parseInt(seconds, 10);
   const value = Number.isFinite(parsed) ? parsed : 2;
   const cloudLong = MODELSLAB_VIDEO_MODELS.includes(model);
-  const local = ['wanvideo_5b', 'wan22_14b', 'wan22_ti2v_5b', 'wan21_1_3b'].includes(model);
+  const local = isLocalVideoModel(model);
   const max = model === 'director' ? 180
     : (['atlas', 'xai', 'veo', 'sora'].includes(model) ? 60
       : (model === 'seedance' ? 30 : ((cloudLong || local) ? 120 : 5)));
@@ -414,14 +411,4 @@ function progressLabel(job, started, base) {
   const secs = Math.max(0, Math.round((Date.now() - started) / 1000));
   const state = job.status === 'queued' ? 'queued' : 'running';
   return `${base}… ${secs}s (${state})`;
-}
-
-function friendlyError(err) {
-  const msg = err?.message || String(err);
-  if (/out of memory|exceed allowed memory|allocation on device|cuda out of memory/i.test(msg)) {
-    return 'The GPU ran out of memory. Free VRAM first (unload other ComfyUI models or stop Ollama/LLM models), pick a smaller ratio, or switch to the lighter Wan 2.2 TI2V 5B, then try again.';
-  }
-  if (/timed out/i.test(msg)) return 'Generation timed out. Try a shorter video or fewer steps.';
-  if (/not reachable|offline|ComfyUI is not/i.test(msg)) return 'ComfyUI is not reachable. Start it or check the URL in Settings.';
-  return msg.length > 240 ? msg.slice(0, 240) + '…' : msg;
 }
