@@ -12,3 +12,4 @@ src-tauri/gen/
 desktop-dist/
 node_modules/
 icon-source.png
+.wrapper-build/

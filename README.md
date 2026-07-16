@@ -9,6 +9,7 @@
 <img alt="Python 3 · stdlib only" src="https://img.shields.io/badge/Python%203-stdlib%20only-3776AB?logo=python&logoColor=white">
 <img alt="pip dependencies: zero" src="https://img.shields.io/badge/pip%20deps-zero-44cc11">
 <img alt="Engine: ComfyUI" src="https://img.shields.io/badge/engine-ComfyUI-8b5cf6">
+<img alt="Edition: macOS" src="https://img.shields.io/badge/edition-macOS-111111?logo=apple&logoColor=white">
 <img alt="Desktop: Tauri v2" src="https://img.shields.io/badge/desktop-Tauri%20v2-24C8DB?logo=tauri&logoColor=white">
 <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue">
 
@@ -28,11 +29,25 @@
 
 ---
 
+> [!IMPORTANT]
+> **This is the macOS edition of ImagineAI.** It tracks the current feature set from `main`—including **Google Veo** and **OpenAI Sora** in the Video tab—and adds a native Swift/WKWebView app, a working macOS image picker, and a one-command installer under `macos/`.
+
 ImagineAI is a clean, fast creative cockpit that doesn't send every prompt to a cloud service by default. A **single-file, standard-library-only** Python server (`server.py`) serves a lightweight web UI, drives your local **ComfyUI** install, and keeps settings, keys, and generated media on your machine.
 
-Generate and edit stills with **Z-Image Turbo**, render text-to-image with **FLUX.1 Schnell FP8**, render text-to-video and image-to-video with **Wan 2.1 / Wan 2.2** — and when the GPU is busy, optionally reach for **Gemini, Grok Imagine, Atlas Cloud, Seedance2.ai, ModelsLab, or Stability AI**.
+Generate and edit stills with **Z-Image Turbo**, render text-to-image with **FLUX.1 Schnell FP8**, render text-to-video and image-to-video with **Wan 2.1 / Wan 2.2** — and when the GPU is busy, optionally reach for **Gemini, Google Veo, OpenAI Sora, Grok Imagine, Atlas Cloud, Seedance2.ai, ModelsLab, or Stability AI**.
 
 ## ⚡ Quick Start
+
+For the native macOS app:
+
+```bash
+./macos/install-macos-app.sh
+open ~/Applications/ImagineAI.app
+```
+
+You can later double-click `Launch ImagineAI.command` from Finder. The installer records the repository location in the app bundle, so the checkout does not need to live in a hard-coded folder.
+
+For the browser version:
 
 ```bash
 cd ~/imagineai
@@ -110,9 +125,9 @@ python3 server.py --port 8799 --open
 
 ```mermaid
 flowchart LR
-    UI["🌐 Web UI — web/<br/>browser or Tauri shell"] -->|"HTTP · 127.0.0.1:8799"| SRV["🐍 server.py<br/>stdlib-only · jobs · history · media proxy"]
+    UI["🌐 Web UI — web/<br/>browser, native macOS app, or Tauri shell"] -->|"HTTP · 127.0.0.1:8799"| SRV["🐍 server.py<br/>stdlib-only · jobs · history · media proxy"]
     SRV -->|"GPU lock"| COMFY["⚙️ ComfyUI · :8188<br/>Z-Image Turbo · Wan 2.1 / 2.2"]
-    SRV -.->|"optional · keyed"| CLOUD["☁️ Cloud engines<br/>Gemini · Grok Imagine · Atlas<br/>Seedance2 · ModelsLab · Stability"]
+    SRV -.->|"optional · keyed"| CLOUD["☁️ Cloud engines<br/>Gemini/Veo · OpenAI Sora · Grok · Atlas<br/>Seedance2 · ModelsLab · Stability"]
     COMFY --> STITCH["🎞️ PyAV / ffmpeg<br/>block stitching · webm transcode"]
     CLOUD -.-> STITCH
     STITCH --> DATA[("📁 data/<br/>outputs · settings · secrets")]
@@ -123,7 +138,19 @@ Everything flows through `server.py`: it serves the UI, drives ComfyUI workflows
 
 ## 💻 Desktop App
 
-Node.js is only needed for this part. Install the tooling once, then:
+### Native macOS edition
+
+The Mac branch includes `macos/ImagineAI.swift`. Its WKWebView wrapper starts the local Python server, opens a native app window, and implements the macOS open panel required by the reference/start-image controls.
+
+```bash
+./macos/install-macos-app.sh
+```
+
+This builds and ad-hoc signs `~/Applications/ImagineAI.app`. Requirements are macOS 12 or newer, Python 3, and the Xcode command-line tools (`xcrun swiftc`). Re-run the command after changing the Swift wrapper.
+
+### Cross-platform Tauri shell
+
+Node.js is only needed for the Tauri build. Install the tooling once, then:
 
 ```bash
 npm install            # once
@@ -142,11 +169,14 @@ Secrets live in `data/secrets.json` with restrictive permissions where supported
 | Provider | Settings key aliases | Env override |
 |---|---|---|
 | Google Gemini | dedicated field | `GEMINI_API_KEY` |
+| Google Veo | uses the Gemini key | `GEMINI_API_KEY` |
+| OpenAI Sora | `sora` · `openai` | `OPENAI_API_KEY` / `SORA_API_KEY` |
 | xAI Grok Imagine | dedicated field | `XAI_API_KEY` |
 | Atlas Cloud | `atlas` · `atlascloud` · `atlas-cloud` | `ATLAS_API_KEY` / `ATLASCLOUD_API_KEY` |
 | Seedance2.ai | `seedance` · `seedance2` · `seedance2-ai` | `SEEDANCE_API_KEY` / `SEEDANCE2_API_KEY` |
 | ModelsLab | `sdxl` · `modelslab` · `stable-diffusion-api` · `free-api` · `vrije-api` · `wan2.6-t2v` | `MODELSLAB_API_KEY` |
 | Stability AI | `stability` · `stability-ai` | `STABILITY_API_KEY` |
+| ElevenLabs | `elevenlabs` | `ELEVENLABS_API_KEY` |
 
 > [!TIP]
 > Atlas environment variables take **precedence** over saved keys — useful when switching from an Atlas Coding Plan token to a full Atlas Cloud API key.
@@ -207,6 +237,7 @@ Secrets live in `data/secrets.json` with restrictive permissions where supported
 | `XAI_IMAGE_MODEL` | `grok-imagine-image-quality` | xAI image model |
 | `XAI_VIDEO_MODEL` | `grok-imagine-video` | xAI video model |
 | `XAI_BASE_URL` | `https://api.x.ai/v1` | xAI API base URL |
+| `IMAGINEAI_XAI_IMAGE_TIMEOUT` | `600` | xAI image request timeout (seconds) |
 | `IMAGINEAI_XAI_VIDEO_TIMEOUT` | `1200` | xAI video polling timeout (seconds) |
 
 ### Atlas Cloud
@@ -262,6 +293,7 @@ imagineai/
 │   ├── services/    # API clients and generation wrappers
 │   └── ui/          # prompt, gallery, history, settings, tabs
 ├── src-tauri/       # Tauri v2 desktop shell
+├── macos/           # native Swift wrapper, Info.plist, and installer
 ├── scripts/         # launch/build helpers
 ├── tests/           # stdlib unittest suite (provider calls mocked)
 ├── assets/          # banner artwork

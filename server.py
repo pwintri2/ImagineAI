@@ -99,6 +99,7 @@ FFMPEG_ENV_KEYS = ("IMAGINEAI_FFMPEG", "FFMPEG_BINARY", "FFMPEG")
 COMFY_IMAGE_TIMEOUT = float(os.environ.get("IMAGINEAI_IMAGE_TIMEOUT", "600"))
 COMFY_VIDEO_TIMEOUT = float(os.environ.get("IMAGINEAI_VIDEO_TIMEOUT", "3600"))
 COMFY_MISSING_HISTORY_GRACE = float(os.environ.get("IMAGINEAI_MISSING_HISTORY_GRACE", "25"))
+XAI_IMAGE_TIMEOUT = float(os.environ.get("IMAGINEAI_XAI_IMAGE_TIMEOUT", "600"))
 XAI_VIDEO_TIMEOUT = float(os.environ.get("IMAGINEAI_XAI_VIDEO_TIMEOUT", "1200"))
 XAI_MAX_SECONDS_PER_REQUEST = 15
 XAI_MAX_STITCHED_SECONDS = 60
@@ -1326,7 +1327,11 @@ def xai_request_json(path: str, key: str, payload: dict[str, Any] | None = None,
         except (json.JSONDecodeError, TypeError):
             pass
         raise RuntimeError(f"xAI API error {exc.code}: {message}") from exc
+    except TimeoutError as exc:
+        raise TimeoutError(f"xAI API request timed out after {timeout:g} seconds.") from exc
     except urllib.error.URLError as exc:
+        if isinstance(exc.reason, TimeoutError) or "timed out" in str(exc.reason).lower():
+            raise TimeoutError(f"xAI API request timed out after {timeout:g} seconds.") from exc
         raise RuntimeError(f"Could not reach xAI API: {exc.reason}") from exc
     return json.loads(raw)
 
@@ -1347,7 +1352,7 @@ def xai_generate_image(prompt: str, aspect: str, count: int, model: str, key: st
         payload["n"] = clamp_int(count, 1, 1, 10)
         payload["response_format"] = "b64_json"
         payload["aspect_ratio"] = ASPECT_TO_XAI.get(aspect, "1:1")
-    data = xai_request_json(path, key, payload, method="POST", timeout=240)
+    data = xai_request_json(path, key, payload, method="POST", timeout=XAI_IMAGE_TIMEOUT)
     urls: list[str] = []
     for item in data.get("data", []) or []:
         if not isinstance(item, dict):
