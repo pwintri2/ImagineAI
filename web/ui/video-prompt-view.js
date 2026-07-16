@@ -250,7 +250,7 @@ function videoHint(s, anyModel) {
   }
   if (s.videoModel === 'veo') {
     if (!s.config.geminiConfigured) return 'Add a Gemini key in Settings to generate Veo videos (same key as Gemini images).';
-    return `Google Veo via ${escapeHtml(s.config.veoVideoModel || 'veo-3.1-generate-preview')} · native audio · 10-60s is stitched locally: segments chain from the previous last frame and crossfade at the seams.`;
+    return `Gemini Veo via ${escapeHtml(s.config.veoVideoModel || 'veo-3.1-generate-preview')} · native audio · 10-60s is stitched locally: segments chain from the previous last frame and crossfade at the seams.`;
   }
   if (s.videoModel === 'sora') {
     if (!s.config.soraConfigured) return 'Add an OpenAI key in Settings as sora or openai to generate Sora videos.';

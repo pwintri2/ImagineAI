@@ -321,7 +321,7 @@ async function handleGenerateVideo() {
   const timeoutMs = Math.max(60 * 60 * 1000, seconds * 4 * 60 * 1000);
 
   try {
-    const progressBase = model === 'xai' ? 'Grok Imagine is rendering' : (model === 'atlas' ? 'Atlas is rendering' : (model === 'veo' ? 'Veo is rendering' : (model === 'sora' ? 'Sora is rendering' : (model === 'director' ? 'Director is filming' : (model === 'seedance' ? 'Seedance is rendering' : (MODELSLAB_VIDEO_MODELS.includes(model) ? 'Stable Diffusion is rendering' : 'Wan is generating frames'))))));
+    const progressBase = model === 'xai' ? 'Grok Imagine is rendering' : (model === 'atlas' ? 'Atlas is rendering' : (model === 'veo' ? 'Gemini Veo is rendering' : (model === 'sora' ? 'Sora is rendering' : (model === 'director' ? 'Director is filming' : (model === 'seedance' ? 'Seedance is rendering' : (MODELSLAB_VIDEO_MODELS.includes(model) ? 'Stable Diffusion is rendering' : 'Wan is generating frames'))))));
     const { results, modelTitle, status } = await generateVideo(
       {
         prompt,
@@ -397,7 +397,7 @@ function videoSecondsForModel(model, seconds) {
 function videoModelTitle(model) {
   if (model === 'xai') return 'Grok Imagine Video';
   if (model === 'atlas') return 'Atlas Video';
-  if (model === 'veo') return 'Veo (Gemini)';
+  if (model === 'veo') return 'Gemini Veo';
   if (model === 'sora') return 'Sora (OpenAI)';
   if (model === 'director') return 'Director';
   if (model === 'seedance') return 'Seedance 2.0 Video';

@@ -112,12 +112,12 @@ function render() {
       ${gem.configured ? `<button id="clearGeminiKey" type="button" class="text-[11px] text-red-400/70 hover:text-red-400 transition">Remove saved key</button>` : ''}
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <div class="space-y-1.5">
-          <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Gemini image model</label>
+          <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Gemini Image model</label>
           <input id="geminiModelInput" type="text" value="${escapeAttr(c.geminiModel || '')}" placeholder="gemini-3.1-flash-image"
             class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30" />
         </div>
         <div class="space-y-1.5">
-          <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Veo video model</label>
+          <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Gemini Veo video model</label>
           <input id="veoVideoModelInput" type="text" value="${escapeAttr(c.veoVideoModel || '')}" placeholder="veo-3.1-generate-preview"
             class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30" />
         </div>

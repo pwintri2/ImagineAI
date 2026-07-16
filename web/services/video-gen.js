@@ -22,7 +22,7 @@ export const VIDEO_MODELS = {
     note: 'Wan 2.7 through Atlas Cloud · up to 60s, chained + crossfaded locally', defaultSeconds: 5,
   },
   veo: {
-    id: 'veo', title: 'Veo', subtitle: 'Cloud · Gemini API',
+    id: 'veo', title: 'Gemini Veo', subtitle: 'Cloud · Google Gemini',
     note: 'Google Veo 3.1 with native audio · uses your Gemini key · up to 60s, chained + crossfaded', defaultSeconds: 8,
   },
   director: {

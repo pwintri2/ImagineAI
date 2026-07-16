@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { friendlyError } from '../web/services/friendly-error.js';
+import { ENGINES } from '../web/services/image-gen.js';
+import { VIDEO_MODELS } from '../web/services/video-gen.js';
 import {
   isVideoModelAvailable,
   reconcileVideoModel,
@@ -31,6 +33,11 @@ test('Veo and Director selections use their cloud-provider availability', () => 
   const current = config({ geminiConfigured: true });
   assert.equal(reconcileVideoModel('veo', current), 'veo');
   assert.equal(reconcileVideoModel('director', current), 'director');
+});
+
+test('Gemini is named explicitly in both Image and Video model lists', () => {
+  assert.equal(ENGINES.gemini.title, 'Gemini Image');
+  assert.equal(VIDEO_MODELS.veo.title, 'Gemini Veo');
 });
 
 test('Sora is a fallback when it is the only configured video engine', () => {
