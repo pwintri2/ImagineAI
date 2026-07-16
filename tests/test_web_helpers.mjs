@@ -60,3 +60,12 @@ test('Sora OOM is identified as cloud-side and never recommends Wan', () => {
   assert.match(message, /did not use your computer's GPU/);
   assert.doesNotMatch(message, /Wan|Free VRAM|ComfyUI/);
 });
+
+test('image and video timeouts get request-specific guidance', () => {
+  const image = friendlyError(new Error('request timed out'), { kind: 'image' });
+  const video = friendlyError(new Error('request timed out'), { kind: 'video' });
+
+  assert.match(image, /fewer images|another engine/);
+  assert.doesNotMatch(image, /shorter video/);
+  assert.match(video, /shorter video|another model/);
+});

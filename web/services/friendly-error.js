@@ -4,7 +4,7 @@ function truncate(message, maxLength = 240) {
   return message.length > maxLength ? `${message.slice(0, maxLength)}…` : message;
 }
 
-export function friendlyError(err, { usesLocalGpu = false, providerLabel = '' } = {}) {
+export function friendlyError(err, { kind = 'generation', usesLocalGpu = false, providerLabel = '' } = {}) {
   const message = err?.message || String(err);
 
   if (OUT_OF_MEMORY_RE.test(message)) {
@@ -17,7 +17,11 @@ export function friendlyError(err, { usesLocalGpu = false, providerLabel = '' } 
     return truncate(message);
   }
 
-  if (/timed out/i.test(message)) return 'Generation timed out. Try a shorter video or fewer steps.';
+  if (/timed out/i.test(message)) {
+    if (kind === 'video') return 'Video generation timed out. Try a shorter video or another model.';
+    if (kind === 'image') return 'Image generation timed out. Try again, request fewer images, or use another engine.';
+    return 'Generation timed out. Try again with a smaller request.';
+  }
   if (usesLocalGpu && /not reachable|offline|ComfyUI is not/i.test(message)) {
     return 'ComfyUI is not reachable. Start it or check the URL in Settings.';
   }

@@ -1,6 +1,7 @@
 {
   "name": "imagineai",
   "private": true,
+  "type": "module",
   "version": "1.0.0",
   "description": "Local Grok-style image & video studio for ComfyUI",
   "license": "MIT",
@@ -8,7 +9,7 @@
     "tauri": "tauri",
     "desktop:dev": "tauri dev",
     "desktop:build": "tauri build",
-    "test:web": "node --experimental-default-type=module --test tests/test_web_helpers.mjs"
+    "test:web": "node --test tests/test_web_helpers.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0"

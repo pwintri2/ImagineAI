@@ -11,6 +11,21 @@ import server  # noqa: E402
 
 
 class XaiTests(unittest.TestCase):
+    def test_xai_image_uses_configured_image_timeout(self):
+        response = {"data": [{"b64_json": "aW1hZ2U="}]}
+
+        with patch.object(server, "xai_request_json", return_value=response) as request, \
+             patch.object(server, "save_output_bytes", return_value=("/image.jpg", Path("/tmp/image.jpg"), "image/jpeg")):
+            urls = server.xai_generate_image("prompt", "square", 1, "grok-imagine", "secret")
+
+        self.assertEqual(urls, ["/image.jpg"])
+        self.assertEqual(request.call_args.kwargs["timeout"], server.XAI_IMAGE_TIMEOUT)
+
+    def test_xai_request_reports_network_timeout(self):
+        with patch("urllib.request.urlopen", side_effect=TimeoutError("timed out")):
+            with self.assertRaisesRegex(TimeoutError, "xAI API request timed out after 12 seconds"):
+                server.xai_request_json("/images/generations", "secret", {}, method="POST", timeout=12)
+
     def test_long_xai_video_returns_segments_when_stitching_is_unavailable(self):
         calls = []
 

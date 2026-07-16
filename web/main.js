@@ -247,6 +247,7 @@ async function handleGenerateImage() {
   } catch (err) {
     console.error('Image generation failed:', err);
     const message = friendlyError(err, {
+      kind: 'image',
       usesLocalGpu: ['local', 'flux'].includes(engine),
       providerLabel: ENGINES[engine]?.title || engine,
     });
@@ -355,6 +356,7 @@ async function handleGenerateVideo() {
   } catch (err) {
     console.error('Video generation failed:', err);
     const message = friendlyError(err, {
+      kind: 'video',
       usesLocalGpu: isLocalModel,
       providerLabel: videoModelTitle(model),
     });
