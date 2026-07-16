@@ -91,9 +91,10 @@ python3 server.py --port 8799 --open
 | **FLUX.1 Schnell FP8** — local · ComfyUI | ✅ | — | — | — | — | — |
 | **Wan 2.1 / 2.2** — local · ComfyUI | — | ✅ | — | ✅ multiple → keyframes | 120 s stitched | — |
 | **Google Gemini Image** | ✅ | — | ✅ | — | — | `GEMINI_API_KEY` |
+| **Google Gemini Video** | — | ✅ native audio | — | ✅ first image only | 60 s stitched (chained + crossfaded) | `GEMINI_API_KEY` |
 | **xAI Grok Imagine** | ✅ | ✅ | ✅ | ✅ multiple → blended mix | 60 s stitched (chained + crossfaded) | `XAI_API_KEY` |
 | **Atlas Cloud** — Wan 2.7 / Seedream / Kling | ✅ | ✅ | ✅ via edit model | ✅ first image only | 60 s stitched (chained + crossfaded) | `ATLAS_API_KEY` |
-| **Google Gemini Veo** — Veo 3.1 via the Gemini API | — | ✅ native audio | — | ✅ first image only | 60 s stitched (chained + crossfaded) | `GEMINI_API_KEY` |
+| **Google Veo** — Veo 3.1 via the Gemini API | — | ✅ native audio | — | ✅ first image only | 60 s stitched (chained + crossfaded) | `GEMINI_API_KEY` |
 | **OpenAI Sora** — sora-2 / sora-2-pro | — | ✅ native audio | — | — | 60 s via native extensions | `OPENAI_API_KEY` |
 | **ElevenLabs** — soundtrack for any video | — | 🎧 music/ambience mixed in | — | — | up to 10 min composed | `ELEVENLABS_API_KEY` |
 | **Seedance2.ai** | 🟡 still frames | ✅ | — | — | 30 s (15 s per call, stitched) | `SEEDANCE_API_KEY` |

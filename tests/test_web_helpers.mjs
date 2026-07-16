@@ -29,15 +29,20 @@ test('a configured Sora selection survives a background config refresh', () => {
   assert.equal(reconcileVideoModel('sora', current), 'sora');
 });
 
-test('Veo and Director selections use their cloud-provider availability', () => {
+test('Gemini, Veo, and Director selections use their cloud-provider availability', () => {
   const current = config({ geminiConfigured: true });
+  assert.equal(reconcileVideoModel('gemini', current), 'gemini');
   assert.equal(reconcileVideoModel('veo', current), 'veo');
   assert.equal(reconcileVideoModel('director', current), 'director');
 });
 
-test('Gemini is named explicitly in both Image and Video model lists', () => {
+test('Gemini and Veo are separate video model choices', () => {
   assert.equal(ENGINES.gemini.title, 'Gemini Image');
-  assert.equal(VIDEO_MODELS.veo.title, 'Gemini Veo');
+  assert.equal(VIDEO_MODELS.gemini.id, 'gemini');
+  assert.equal(VIDEO_MODELS.gemini.title, 'Gemini');
+  assert.equal(VIDEO_MODELS.veo.id, 'veo');
+  assert.equal(VIDEO_MODELS.veo.title, 'Veo');
+  assert.notEqual(VIDEO_MODELS.gemini.id, VIDEO_MODELS.veo.id);
 });
 
 test('Sora is a fallback when it is the only configured video engine', () => {

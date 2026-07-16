@@ -102,8 +102,8 @@ function render() {
     </section>
 
     <section class="space-y-3">
-      <h3 class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Gemini API key (cloud images + Veo video)</h3>
-      <p class="text-[11px] text-slate-500">Stored locally on this machine (data/secrets.json, chmod 600). One key powers the Image tab's Gemini engine and the Video tab's Veo model.</p>
+      <h3 class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Gemini API key (cloud images + Gemini/Veo video)</h3>
+      <p class="text-[11px] text-slate-500">Stored locally on this machine (data/secrets.json, chmod 600). One key powers the Image tab's Gemini engine and the separate Gemini and Veo choices on the Video tab.</p>
       <div class="flex gap-2">
         <input id="geminiKeyInput" type="password" autocomplete="off" placeholder="${gem.configured ? 'Saved ' + escapeAttr(gem.hint || '') : 'AIza…'}"
           class="flex-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30" />
@@ -117,7 +117,7 @@ function render() {
             class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30" />
         </div>
         <div class="space-y-1.5">
-          <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Gemini Veo video model</label>
+          <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Gemini / Veo video model</label>
           <input id="veoVideoModelInput" type="text" value="${escapeAttr(c.veoVideoModel || '')}" placeholder="veo-3.1-generate-preview"
             class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30" />
         </div>

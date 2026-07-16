@@ -21,8 +21,12 @@ export const VIDEO_MODELS = {
     id: 'atlas', title: 'Atlas Video', subtitle: 'Cloud · Atlas Cloud',
     note: 'Wan 2.7 through Atlas Cloud · up to 60s, chained + crossfaded locally', defaultSeconds: 5,
   },
+  gemini: {
+    id: 'gemini', title: 'Gemini', subtitle: 'Cloud · Google Gemini',
+    note: 'Google video generation through your Gemini API key · up to 60s, chained + crossfaded', defaultSeconds: 8,
+  },
   veo: {
-    id: 'veo', title: 'Gemini Veo', subtitle: 'Cloud · Google Gemini',
+    id: 'veo', title: 'Veo', subtitle: 'Cloud · Google Veo',
     note: 'Google Veo 3.1 with native audio · uses your Gemini key · up to 60s, chained + crossfaded', defaultSeconds: 8,
   },
   director: {

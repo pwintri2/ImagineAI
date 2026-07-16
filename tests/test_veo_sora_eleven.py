@@ -11,6 +11,34 @@ import server  # noqa: E402
 
 
 class VeoTests(unittest.TestCase):
+    def test_gemini_and_veo_video_choices_keep_separate_metadata(self):
+        calls = []
+
+        def fake_generate(prompt, aspect, seconds, model, key, start_image="", on_progress=None,
+                          negative_prompt="", seed=None):
+            calls.append((prompt, model, key))
+            return {"url": "/api/local-media?name=google.webm", "type": "video", "model": model}
+
+        with patch.object(server, "load_settings",
+                          return_value={"veoVideoModel": "veo-3.1-generate-preview"}), \
+             patch.object(server, "gemini_key", return_value="gemini-secret"), \
+             patch.object(server, "veo_generate_video", side_effect=fake_generate):
+            for model, title in (("gemini", "Gemini Video"), ("veo", "Veo")):
+                with self.subTest(model=model):
+                    job_id = server.make_job("video")
+                    server.run_video_job(job_id, {
+                        "prompt": "a paper boat", "model": model, "aspect": "wide", "seconds": 8,
+                    })
+                    job = server.get_job(job_id)
+                    self.assertEqual(job["status"], "done")
+                    self.assertEqual(job["meta"]["engine"], model)
+                    self.assertEqual(job["meta"]["modelTitle"], title)
+
+        self.assertEqual(calls, [
+            ("a paper boat", "veo-3.1-generate-preview", "gemini-secret"),
+            ("a paper boat", "veo-3.1-generate-preview", "gemini-secret"),
+        ])
+
     def test_veo_segment_lengths_only_use_valid_durations(self):
         self.assertEqual(server.veo_video_segment_lengths(8), [8])
         self.assertEqual(server.veo_video_segment_lengths(4), [4])

@@ -4086,18 +4086,20 @@ def run_video_job(job_id: str, payload: dict[str, Any]) -> None:
                        meta=done_meta)
             return
 
-        if model in ("veo", "veo3", "veo-3", "veo-3.1", "veo31", "gemini-veo"):
+        if model in ("gemini", "veo", "veo3", "veo-3", "veo-3.1", "veo31", "gemini-veo"):
+            selected_engine = "gemini" if model == "gemini" else "veo"
+            selected_title = "Gemini Video" if model == "gemini" else "Veo"
             veo_model = str(payload.get("veoVideoModel") or settings.get("veoVideoModel")
                             or DEFAULT_VEO_VIDEO_MODEL)
             update_job(job_id, status="running",
-                       meta={"engine": "veo", "modelTitle": "Veo (Gemini)", "model": veo_model})
+                       meta={"engine": selected_engine, "modelTitle": selected_title, "model": veo_model})
             key = gemini_key()
             if not key:
-                raise RuntimeError("No Gemini API key saved. Add one in Settings to use Veo video.")
+                raise RuntimeError(f"No Gemini API key saved. Add one in Settings to use {selected_title}.")
 
             def on_veo_progress(status: str) -> None:
                 update_job(job_id, status="running",
-                           meta={"engine": "veo", "modelTitle": "Veo (Gemini)",
+                           meta={"engine": selected_engine, "modelTitle": selected_title,
                                  "model": veo_model, "veoStatus": status})
 
             result = veo_generate_video(
@@ -4110,7 +4112,7 @@ def run_video_job(job_id: str, payload: dict[str, Any]) -> None:
             result = apply_soundtrack(result, payload, on_progress=on_veo_progress)
             actual_veo_model = str(result.get("model") or veo_model)
             update_job(job_id, status="done", results=[result],
-                       meta={"engine": "veo", "modelTitle": "Veo (Gemini)", "model": actual_veo_model})
+                       meta={"engine": selected_engine, "modelTitle": selected_title, "model": actual_veo_model})
             return
 
         if model == "director":

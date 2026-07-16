@@ -21,7 +21,7 @@ export function isVideoModelAvailable(model, config = {}) {
   if (!model) return false;
   if (model === 'xai') return !!config.xaiConfigured;
   if (model === 'atlas') return !!config.atlasConfigured;
-  if (model === 'veo') return !!config.geminiConfigured;
+  if (model === 'gemini' || model === 'veo') return !!config.geminiConfigured;
   if (model === 'sora') return !!config.soraConfigured;
   if (model === 'seedance') return !!config.seedanceConfigured;
   if (model === 'director') {
@@ -43,6 +43,7 @@ export function reconcileVideoModel(selectedModel, config = {}) {
     'wanvideo_5b',
     'xai',
     'atlas',
+    'gemini',
     'veo',
     'sora',
     'seedance',

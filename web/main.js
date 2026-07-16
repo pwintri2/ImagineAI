@@ -271,7 +271,7 @@ async function handleGenerateVideo() {
     ? !!s.config.xaiConfigured
     : model === 'atlas'
       ? !!s.config.atlasConfigured
-    : model === 'veo'
+    : model === 'gemini' || model === 'veo'
       ? !!s.config.geminiConfigured
     : model === 'sora'
       ? !!s.config.soraConfigured
@@ -286,7 +286,7 @@ async function handleGenerateVideo() {
     showToast(model === 'xai'
       ? 'No xAI key saved — open Settings to add one.'
       : (model === 'atlas' ? 'No Atlas key saved — open Settings to add one as atlas.'
-        : (model === 'veo' ? 'No Gemini key saved — open Settings to add one to use Veo.'
+        : (['gemini', 'veo'].includes(model) ? `No Gemini key saved — open Settings to add one to use ${model === 'gemini' ? 'Gemini' : 'Veo'}.`
           : (model === 'sora' ? 'No OpenAI key saved — open Settings to add one as sora or openai.'
             : (model === 'director' ? 'Director needs at least one cloud engine key: Atlas, xAI (Grok), or Gemini (Veo).'
               : (model === 'seedance' ? 'No Seedance key saved — open Settings to add one as seedance.'
@@ -296,8 +296,8 @@ async function handleGenerateVideo() {
     return;
   }
   const startImages = VideoPromptView.getStartImages();
-  if (startImages.length && !['wan22_ti2v_5b', 'wan22_14b', 'xai', 'atlas', 'veo', 'director'].includes(model)) {
-    showToast('Start images work with Wan 2.2 TI2V 5B / 14B, Grok Imagine, Atlas, Veo, or Director. Select one of those first.', 'info');
+  if (startImages.length && !['wan22_ti2v_5b', 'wan22_14b', 'xai', 'atlas', 'gemini', 'veo', 'director'].includes(model)) {
+    showToast('Start images work with Wan 2.2 TI2V 5B / 14B, Grok Imagine, Atlas, Gemini, Veo, or Director. Select one of those first.', 'info');
     return;
   }
   const mergeStartImages = VideoPromptView.getMergeStartImages() && startImages.length > 1;
@@ -321,7 +321,7 @@ async function handleGenerateVideo() {
   const timeoutMs = Math.max(60 * 60 * 1000, seconds * 4 * 60 * 1000);
 
   try {
-    const progressBase = model === 'xai' ? 'Grok Imagine is rendering' : (model === 'atlas' ? 'Atlas is rendering' : (model === 'veo' ? 'Gemini Veo is rendering' : (model === 'sora' ? 'Sora is rendering' : (model === 'director' ? 'Director is filming' : (model === 'seedance' ? 'Seedance is rendering' : (MODELSLAB_VIDEO_MODELS.includes(model) ? 'Stable Diffusion is rendering' : 'Wan is generating frames'))))));
+    const progressBase = model === 'xai' ? 'Grok Imagine is rendering' : (model === 'atlas' ? 'Atlas is rendering' : (model === 'gemini' ? 'Gemini is rendering' : (model === 'veo' ? 'Veo is rendering' : (model === 'sora' ? 'Sora is rendering' : (model === 'director' ? 'Director is filming' : (model === 'seedance' ? 'Seedance is rendering' : (MODELSLAB_VIDEO_MODELS.includes(model) ? 'Stable Diffusion is rendering' : 'Wan is generating frames')))))));
     const { results, modelTitle, status } = await generateVideo(
       {
         prompt,
@@ -389,7 +389,7 @@ function videoSecondsForModel(model, seconds) {
   const cloudLong = MODELSLAB_VIDEO_MODELS.includes(model);
   const local = isLocalVideoModel(model);
   const max = model === 'director' ? 180
-    : (['atlas', 'xai', 'veo', 'sora'].includes(model) ? 60
+    : (['atlas', 'xai', 'gemini', 'veo', 'sora'].includes(model) ? 60
       : (model === 'seedance' ? 30 : ((cloudLong || local) ? 120 : 5)));
   return Math.max(1, Math.min(max, value));
 }
@@ -397,7 +397,8 @@ function videoSecondsForModel(model, seconds) {
 function videoModelTitle(model) {
   if (model === 'xai') return 'Grok Imagine Video';
   if (model === 'atlas') return 'Atlas Video';
-  if (model === 'veo') return 'Gemini Veo';
+  if (model === 'gemini') return 'Gemini Video';
+  if (model === 'veo') return 'Veo';
   if (model === 'sora') return 'Sora (OpenAI)';
   if (model === 'director') return 'Director';
   if (model === 'seedance') return 'Seedance 2.0 Video';

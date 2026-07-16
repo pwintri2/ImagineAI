@@ -37,17 +37,17 @@ function chip(label, value, group, active, disabled = false) {
 // Which engines actually consume the Advanced fields; the others ignore them
 // server-side, so the UI must not promise what the engine drops.
 export function supportsNegativePrompt(model) {
-  return ['atlas', 'veo', 'director'].includes(model)
+  return ['atlas', 'gemini', 'veo', 'director'].includes(model)
     || MODELSLAB_VIDEO_MODELS.includes(model) || LOCAL_VIDEO_MODELS.includes(model);
 }
 export function supportsSeed(model) {
-  return ['atlas', 'veo', 'seedance', 'director'].includes(model)
+  return ['atlas', 'gemini', 'veo', 'seedance', 'director'].includes(model)
     || MODELSLAB_VIDEO_MODELS.includes(model) || LOCAL_VIDEO_MODELS.includes(model);
 }
 
 function maxSecondsForModel(model) {
   if (model === 'director') return 180;   // long film: scenes across engines, chained + crossfaded
-  if (['atlas', 'xai', 'veo', 'sora'].includes(model)) return 60;   // segments, chained + crossfaded locally (Sora extends natively)
+  if (['atlas', 'xai', 'gemini', 'veo', 'sora'].includes(model)) return 60;   // segments, chained + crossfaded locally (Sora extends natively)
   if (model === 'seedance') return 30;
   if (MODELSLAB_VIDEO_MODELS.includes(model)) return 120;   // cloud, stitched — no local VRAM used
   if (LOCAL_VIDEO_MODELS.includes(model)) return 120;   // rendered in ~10s blocks, stitched together
@@ -78,6 +78,7 @@ export function render() {
   const wan21Ok = modelAvailable('wan21_1_3b');
   const xaiOk = modelAvailable('xai');
   const atlasOk = modelAvailable('atlas');
+  const geminiOk = modelAvailable('gemini');
   const veoOk = modelAvailable('veo');
   const soraOk = modelAvailable('sora');
   const directorOk = modelAvailable('director');
@@ -114,6 +115,7 @@ export function render() {
         <div id="modelChips" class="flex flex-wrap gap-1.5">
           ${chip(`𝕏 ${VIDEO_MODELS.xai.title}`, 'xai', 'model', s.videoModel === 'xai', !xaiOk)}
           ${chip(`◆ ${VIDEO_MODELS.atlas.title}`, 'atlas', 'model', s.videoModel === 'atlas', !atlasOk)}
+          ${chip(`✦ ${VIDEO_MODELS.gemini.title}`, 'gemini', 'model', s.videoModel === 'gemini', !geminiOk)}
           ${chip(`▲ ${VIDEO_MODELS.veo.title}`, 'veo', 'model', s.videoModel === 'veo', !veoOk)}
           ${chip(`● ${VIDEO_MODELS.sora.title}`, 'sora', 'model', s.videoModel === 'sora', !soraOk)}
           ${chip(`🎭 ${VIDEO_MODELS.director.title}`, 'director', 'model', s.videoModel === 'director', !directorOk)}
@@ -209,7 +211,7 @@ export function render() {
         <span id="videoBtnIcon">🎬</span><span id="videoBtnText">Create Video</span>
       </button>
 
-      <p class="text-center text-[11px] text-slate-600">${videoHint(s, wanVideoOk || wan22Ok || wanTi2vOk || wan21Ok || xaiOk || atlasOk || veoOk || soraOk || directorOk || seedanceOk || stableDiffusionOk)}</p>
+      <p class="text-center text-[11px] text-slate-600">${videoHint(s, wanVideoOk || wan22Ok || wanTi2vOk || wan21Ok || xaiOk || atlasOk || geminiOk || veoOk || soraOk || directorOk || seedanceOk || stableDiffusionOk)}</p>
     </div>
   `;
 
@@ -248,9 +250,10 @@ function videoHint(s, anyModel) {
     if (!s.config.atlasConfigured) return 'Add an Atlas key in Settings as atlas to generate Atlas videos.';
     return `Atlas Cloud video via ${escapeHtml(s.config.atlasVideoModel || 'alibaba/wan-2.7/text-to-video')} · 16-60s is stitched locally: each segment continues from the previous one's last frame and the seams are crossfaded.`;
   }
-  if (s.videoModel === 'veo') {
-    if (!s.config.geminiConfigured) return 'Add a Gemini key in Settings to generate Veo videos (same key as Gemini images).';
-    return `Gemini Veo via ${escapeHtml(s.config.veoVideoModel || 'veo-3.1-generate-preview')} · native audio · 10-60s is stitched locally: segments chain from the previous last frame and crossfade at the seams.`;
+  if (s.videoModel === 'gemini' || s.videoModel === 'veo') {
+    const selectedName = s.videoModel === 'gemini' ? 'Gemini' : 'Veo';
+    if (!s.config.geminiConfigured) return `Add a Gemini key in Settings to generate ${selectedName} videos.`;
+    return `${selectedName} via ${escapeHtml(s.config.veoVideoModel || 'veo-3.1-generate-preview')} · native audio · 10-60s is stitched locally: segments chain from the previous last frame and crossfade at the seams.`;
   }
   if (s.videoModel === 'sora') {
     if (!s.config.soraConfigured) return 'Add an OpenAI key in Settings as sora or openai to generate Sora videos.';
@@ -328,7 +331,7 @@ function rememberDraft() {
 }
 
 const MAX_START_IMAGES = 8;
-const START_IMAGE_MODELS = ['wan22_ti2v_5b', 'wan22_14b', 'xai', 'atlas', 'veo', 'director'];
+const START_IMAGE_MODELS = ['wan22_ti2v_5b', 'wan22_14b', 'xai', 'atlas', 'gemini', 'veo', 'director'];
 
 async function handleStartImageChange() {
   const files = Array.from(startImageInput?.files || []);
@@ -365,7 +368,7 @@ function readFileAsDataURL(file) {
 
 function startImagesLabel(images) {
   if (!images.length) {
-    return 'Optional. Add one or more images. Grok mixes multiple images into one clip; local Wan 2.2 TI2V/14B travels through them as keyframes; Atlas and Veo use the first only.';
+    return 'Optional. Add one or more images. Grok mixes multiple images into one clip; local Wan 2.2 TI2V/14B travels through them as keyframes; Atlas, Gemini, and Veo use the first only.';
   }
   if (images.length === 1) return `1 start frame · ${formatBytes(images[0].size)}`;
   return `${images.length} images · Grok blends them; local Wan uses them as keyframes in order.`;
