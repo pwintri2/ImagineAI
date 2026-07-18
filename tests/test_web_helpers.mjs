@@ -8,6 +8,16 @@ import {
   isVideoModelAvailable,
   reconcileVideoModel,
 } from '../web/services/video-model-routing.js';
+import {
+  editionFromSearch,
+  videoMediaType,
+  videoPlaybackCandidates,
+} from '../web/services/video-playback.js';
+import {
+  historyVideoFileBase,
+  historyVideoMp4Url,
+  historyVideoSaveTarget,
+} from '../web/ui/history-view.js';
 
 function config(overrides = {}) {
   return {
@@ -43,6 +53,53 @@ test('Gemini and Veo are separate video model choices', () => {
   assert.equal(VIDEO_MODELS.veo.id, 'veo');
   assert.equal(VIDEO_MODELS.veo.title, 'Veo');
   assert.notEqual(VIDEO_MODELS.gemini.id, VIDEO_MODELS.veo.id);
+});
+
+test('macOS playback prefers the native MP4 before the WebM preview', () => {
+  const video = {
+    url: '/api/local-media?name=preview.webm',
+    mp4Url: '/api/local-media?name=master.mp4',
+  };
+  assert.equal(editionFromSearch('?edition=macos'), 'macos');
+  assert.deepEqual(videoPlaybackCandidates(video, 'macos'), [video.mp4Url, video.url]);
+  assert.deepEqual(videoPlaybackCandidates(video, 'linux'), [video.url, video.mp4Url]);
+  assert.equal(videoMediaType(video.mp4Url), 'video/mp4');
+  assert.equal(videoMediaType(video.url), 'video/webm');
+});
+
+test('playback candidates de-duplicate a direct MP4 result', () => {
+  const url = '/api/local-media?name=sora.mp4';
+  assert.deepEqual(videoPlaybackCandidates({ url, mp4Url: url }, 'macos'), [url]);
+});
+
+test('history video save uses the MP4 master when available', () => {
+  const video = {
+    url: '/api/local-media?name=preview.webm',
+    mp4Url: '/api/local-media?name=master.mp4',
+  };
+  assert.equal(historyVideoMp4Url(video), video.mp4Url);
+  assert.equal(historyVideoMp4Url({ url: '/api/local-media?name=only.mp4' }), '/api/local-media?name=only.mp4');
+  assert.equal(historyVideoMp4Url({ url: '/api/local-media?name=preview.webm' }), '');
+  assert.deepEqual(historyVideoSaveTarget(video), {
+    url: video.mp4Url,
+    label: 'Save MP4',
+    fallbackExt: '.mp4',
+    convertMp4: false,
+  });
+  assert.deepEqual(historyVideoSaveTarget({ url: '/api/local-media?name=preview.webm' }), {
+    url: '/api/local-media?name=preview.webm',
+    label: 'Save MP4',
+    fallbackExt: '.webm',
+    convertMp4: true,
+  });
+});
+
+test('history video save names files from the prompt', () => {
+  assert.equal(
+    historyVideoFileBase({ prompt: 'A Quiet Canal at Dawn!' }),
+    'a-quiet-canal-at-dawn',
+  );
+  assert.equal(historyVideoFileBase({ prompt: '' }, 'fallback-video'), 'fallback-video');
 });
 
 test('Sora is a fallback when it is the only configured video engine', () => {

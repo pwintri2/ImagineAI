@@ -1,3 +1,9 @@
+import {
+  editionFromSearch,
+  videoMediaType,
+  videoPlaybackCandidates,
+} from '../services/video-playback.js';
+
 let galleryEl;
 let cancelHandler = null;
 
@@ -82,13 +88,11 @@ export function renderResults(videos, meta = {}) {
   const downloadExt = extensionFromUrl(downloadUrl, video.mp4Url ? '.mp4' : '.webm');
   const segments = segmentList(video);
   const segmentFallback = video.stitchStatus === 'segments' && segments.length > 1;
+  const playbackUrls = videoPlaybackCandidates(video, editionFromSearch(window.location.search));
   galleryEl.innerHTML = `
     <div class="fade-in space-y-4">
       <div class="video-card group relative rounded-2xl overflow-hidden border border-white/10 bg-white/5 aspect-video">
-        <video id="generatedVideo" controls loop playsinline class="w-full h-full object-contain bg-black" preload="auto">
-          ${sourceTag(video.url)}
-          ${video.mp4Url && video.mp4Url !== video.url ? sourceTag(video.mp4Url, 'video/mp4') : ''}
-        </video>
+        <video id="generatedVideo" controls loop playsinline class="w-full h-full object-contain bg-black" preload="auto"></video>
       </div>
       <p id="videoPlaybackError" class="hidden rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-200"></p>
       ${(video.soundtrackWarning || (video.stitchWarning && video.stitchStatus !== 'segments')) ? `
@@ -108,14 +112,26 @@ export function renderResults(videos, meta = {}) {
       </div>
     </div>
   `;
-  wireVideoFallback(video);
+  wireVideoPlayback(playbackUrls);
 }
 
-function wireVideoFallback(video) {
+function wireVideoPlayback(playbackUrls) {
   const el = document.getElementById('generatedVideo');
   const errorEl = document.getElementById('videoPlaybackError');
   if (!el || !errorEl) return;
-  let triedFallback = false;
+  let nextIndex = 0;
+
+  const loadNext = () => {
+    const url = playbackUrls[nextIndex++];
+    if (!url) return false;
+    while (el.firstChild) el.removeChild(el.firstChild);
+    const source = document.createElement('source');
+    source.src = url;
+    source.type = videoMediaType(url);
+    el.appendChild(source);
+    el.load();
+    return true;
+  };
 
   el.addEventListener('loadeddata', () => {
     errorEl.classList.add('hidden');
@@ -123,19 +139,15 @@ function wireVideoFallback(video) {
   });
 
   el.addEventListener('error', () => {
-    if (!triedFallback && video.mp4Url && video.mp4Url !== video.url) {
-      triedFallback = true;
-      while (el.firstChild) el.removeChild(el.firstChild);
-      const source = document.createElement('source');
-      source.src = video.mp4Url;
-      source.type = 'video/mp4';
-      el.appendChild(source);
-      el.load();
-      return;
-    }
+    if (loadNext()) return;
     errorEl.textContent = 'Embedded playback failed. The file is still available with Save.';
     errorEl.classList.remove('hidden');
   }, true);
+
+  if (!loadNext()) {
+    errorEl.textContent = 'No playable video source was returned. The file may still be available with Save.';
+    errorEl.classList.remove('hidden');
+  }
 }
 
 function handleClick(e) {
@@ -171,12 +183,6 @@ function renderEmpty() {
   `;
 }
 
-function sourceTag(url, forcedType = '') {
-  if (!url) return '';
-  const type = forcedType || mediaTypeFromUrl(url);
-  return `<source src="${escapeAttr(url)}"${type ? ` type="${escapeAttr(type)}"` : ''}>`;
-}
-
 function segmentList(video) {
   return Array.isArray(video?.segments) ? video.segments.filter((segment) => segment?.url || segment?.mp4Url) : [];
 }
@@ -200,14 +206,6 @@ function renderSegmentFallback(segments, baseName, warning) {
       <div class="space-y-2">${items}</div>
     </div>
   `;
-}
-
-function mediaTypeFromUrl(url) {
-  const ext = extensionFromUrl(url, '');
-  if (ext === '.webm') return 'video/webm';
-  if (ext === '.mp4') return 'video/mp4';
-  if (ext === '.mov') return 'video/quicktime';
-  return '';
 }
 
 function downloadMedia(url, rawName, fallbackExt) {

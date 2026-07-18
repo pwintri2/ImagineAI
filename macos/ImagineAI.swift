@@ -2,7 +2,7 @@ import Cocoa
 import UniformTypeIdentifiers
 import WebKit
 
-final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
     var window: NSWindow!
     var webView: WKWebView!
     var serverTask: Process?
@@ -71,6 +71,98 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
         panel.beginSheetModal(for: window) { response in
             completionHandler(response == .OK ? panel.urls : nil)
+        }
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        preferences: WKWebpagePreferences,
+        decisionHandler: @escaping (WKNavigationActionPolicy, WKWebpagePreferences) -> Void
+    ) {
+        if navigationAction.shouldPerformDownload {
+            decisionHandler(.download, preferences)
+            return
+        }
+        decisionHandler(.allow, preferences)
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationResponse: WKNavigationResponse,
+        decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void
+    ) {
+        if isAttachmentResponse(navigationResponse.response) {
+            decisionHandler(.download)
+            return
+        }
+        decisionHandler(.allow)
+    }
+
+    func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
+        download.delegate = self
+    }
+
+    func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
+        download.delegate = self
+    }
+
+    func download(
+        _ download: WKDownload,
+        decideDestinationUsing response: URLResponse,
+        suggestedFilename: String,
+        completionHandler: @escaping (URL?) -> Void
+    ) {
+        let filename = cleanDownloadFilename(suggestedFilename)
+        completionHandler(downloadDestination(for: filename))
+    }
+
+    func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
+        showDownloadError(error.localizedDescription)
+    }
+
+    func isAttachmentResponse(_ response: URLResponse) -> Bool {
+        guard
+            let http = response as? HTTPURLResponse,
+            let disposition = http.value(forHTTPHeaderField: "Content-Disposition")
+        else {
+            return false
+        }
+        return disposition.localizedCaseInsensitiveContains("attachment")
+    }
+
+    func cleanDownloadFilename(_ value: String) -> String {
+        let cleaned = value
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "\\", with: "_")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.isEmpty ? "imagineai-video.mp4" : cleaned
+    }
+
+    func downloadDestination(for filename: String) -> URL {
+        let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Downloads", isDirectory: true)
+        try? FileManager.default.createDirectory(at: downloads, withIntermediateDirectories: true)
+
+        let base = (filename as NSString).deletingPathExtension
+        let ext = (filename as NSString).pathExtension
+        var candidate = downloads.appendingPathComponent(filename)
+        var index = 2
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            let suffix = ext.isEmpty ? "" : ".\(ext)"
+            candidate = downloads.appendingPathComponent("\(base) \(index)\(suffix)")
+            index += 1
+        }
+        return candidate
+    }
+
+    func showDownloadError(_ message: String) {
+        DispatchQueue.main.async {
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "Download niet opgeslagen"
+            alert.informativeText = message
+            alert.beginSheetModal(for: self.window)
         }
     }
 

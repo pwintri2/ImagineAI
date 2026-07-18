@@ -31,6 +31,7 @@ export const freeGpu = () => postJson('/api/gpu/free', {});
 export const startImageJob = (payload) => postJson('/api/generate/image', payload);
 export const startVideoJob = (payload) => postJson('/api/generate/video', payload);
 export const cancelJob = (jobId) => postJson(`/api/jobs/${encodeURIComponent(jobId)}/cancel`, {});
+export const ensureVideoMp4 = (url) => postJson('/api/media/ensure-mp4', { url });
 
 async function getJob(jobId) {
   return readJson(await fetch(`/api/jobs/${encodeURIComponent(jobId)}`));

@@ -1185,6 +1185,27 @@ def save_output_bytes(prefix: str, raw: bytes, ext: str) -> tuple[str, Path, str
     return output_url(name), path, name
 
 
+def copy_video_path_to_output(src_path: Path, prefix: str = "video") -> tuple[str, Path] | None:
+    """Persist a temporary mp4 so downloads do not point at soon-deleted blocks."""
+    if not src_path.exists() or not src_path.is_file():
+        return None
+    ensure_dirs()
+    safe_prefix_value = re.sub(r"[^A-Za-z0-9_]+", "_", prefix or "video").strip("_") or "video"
+    name = f"{safe_prefix_value}_{int(now())}_{uuid.uuid4().hex[:8]}.mp4"
+    out_path = OUTPUTS_DIR / name
+    try:
+        shutil.copyfile(src_path, out_path)
+        if out_path.stat().st_size > 0:
+            return output_url(name), out_path
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        out_path.unlink(missing_ok=True)
+    except Exception:
+        pass
+    return None
+
+
 def download_url_to_output(url: str, prefix: str, fallback_ext: str,
                            timeout: float = 240) -> tuple[str, Path, str]:
     req = urllib.request.Request(url)
@@ -2855,7 +2876,7 @@ def veo_generate_video_clip(prompt: str, aspect: str, duration: int, model: str,
     parameters: dict[str, Any] = {
         "aspectRatio": "9:16" if aspect in ("tall", "portrait") else "16:9",
         "resolution": resolution,
-        "durationSeconds": str(duration),
+        "durationSeconds": duration,
     }
     extras: dict[str, Any] = {}
     if str(negative_prompt or "").strip():
@@ -3713,10 +3734,19 @@ def director_generate_video(job_id: str, payload: dict[str, Any], prompt: str, a
             combined: dict[str, Any] | None = {"url": single_clip["url"]}
             if single_clip.get("mp4Url"):
                 combined["mp4Url"] = single_clip["mp4Url"]
+            elif single_clip.get("mp4Path"):
+                mp4 = copy_video_path_to_output(Path(str(single_clip["mp4Path"])), "director_video")
+                if mp4:
+                    combined["mp4Url"] = mp4[0]
         else:
-            webm_url = transcode_mp4_path_to_webm(produced[0], timeout=900)
-            combined = {"url": webm_url or output_url(produced[0].name),
-                        "mp4Url": output_url(produced[0].name)}
+            mp4 = copy_video_path_to_output(produced[0], "director_video")
+            if mp4:
+                mp4_url, mp4_path = mp4
+                webm_url = transcode_mp4_path_to_webm(mp4_path, timeout=900)
+                combined = {"url": webm_url or mp4_url, "mp4Url": mp4_url}
+            else:
+                webm_url = transcode_mp4_path_to_webm(produced[0], timeout=900)
+                combined = {"url": webm_url} if webm_url else None
     else:
         combined = stitch_video_paths(produced)
     if job_cancel_requested(job_id):
@@ -4651,6 +4681,79 @@ def transcode_mp4_path_to_webm(src_path: Path, timeout: float = 300) -> str | No
         return None
 
 
+def ensure_local_video_mp4(url: object) -> dict[str, Any]:
+    """Return an MP4 URL for a local history video, converting previews if needed."""
+    src_path = local_media_path_from_url(url)
+    if not src_path:
+        raise ValueError("The history video file was not found.")
+    if src_path.suffix.lower() == ".mp4":
+        return {"mp4Url": output_url(src_path.name), "converted": False}
+
+    ffmpeg = ffmpeg_executable()
+    if not ffmpeg:
+        raise RuntimeError("ffmpeg is not available, so this history video cannot be converted to MP4.")
+
+    ensure_dirs()
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", src_path.stem).strip("._-") or "history_video"
+    out_name = f"converted_{stem[:110]}.mp4"
+    out_path = OUTPUTS_DIR / out_name
+    if out_path.exists() and out_path.is_file() and out_path.stat().st_size > 0:
+        return {"mp4Url": output_url(out_name), "converted": False}
+
+    try:
+        result = subprocess.run(
+            [
+                ffmpeg,
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                str(src_path),
+                "-map",
+                "0:v:0",
+                "-map",
+                "0:a?",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-crf",
+                "20",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "192k",
+                "-movflags",
+                "+faststart",
+                str(out_path),
+            ],
+            capture_output=True,
+            timeout=900,
+        )
+        if result.returncode == 0 and out_path.exists() and out_path.stat().st_size > 0:
+            return {"mp4Url": output_url(out_name), "converted": True}
+    except Exception as exc:  # noqa: BLE001
+        try:
+            out_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise RuntimeError(f"Could not convert this history video to MP4: {exc}") from exc
+
+    try:
+        out_path.unlink(missing_ok=True)
+    except Exception:
+        pass
+    detail = ""
+    try:
+        detail = result.stderr.decode("utf-8", "replace").strip()[:300]
+    except Exception:
+        pass
+    raise RuntimeError(f"Could not convert this history video to MP4{': ' + detail if detail else '.'}")
+
+
 def ffmpeg_executable() -> str | None:
     candidates: list[str] = []
     for key in FFMPEG_ENV_KEYS:
@@ -4835,7 +4938,8 @@ def concat_mp4_paths_to_webm(src_paths: list[Path]) -> str | None:
     webm_url = concat_mp4_paths_with_ffmpeg(
         paths,
         ".webm",
-        ["-c:v", "libvpx-vp9", "-crf", "34", "-b:v", "0", "-deadline", "realtime", "-cpu-used", "8", "-row-mt", "1"],
+        ["-c:v", "libvpx-vp9", "-pix_fmt", "yuv420p", "-crf", "34", "-b:v", "0",
+         "-deadline", "realtime", "-cpu-used", "8", "-row-mt", "1"],
     )
     if webm_url:
         return webm_url
@@ -5251,7 +5355,14 @@ def render_local_stitched_video(job_id: str, payload: dict[str, Any], model: str
             phase="stitch", blockTotal=len(produced), progress=0.99,
             note="Stitching the blocks together…"))
         if len(produced) == 1:
-            combined = {"url": transcode_mp4_path_to_webm(produced[0])}
+            mp4 = copy_video_path_to_output(produced[0], "local_video")
+            if mp4:
+                mp4_url, mp4_path = mp4
+                webm_url = transcode_mp4_path_to_webm(mp4_path)
+                combined = {"url": webm_url or mp4_url, "mp4Url": mp4_url}
+            else:
+                webm_url = transcode_mp4_path_to_webm(produced[0])
+                combined = {"url": webm_url} if webm_url else None
         else:
             combined = stitch_video_paths(produced)
         if job_cancel_requested(job_id):
@@ -5443,6 +5554,11 @@ class Handler(BaseHTTPRequestHandler):
                 job_id = path[len("/api/jobs/"):-len("/cancel")]
                 cancelled = request_job_cancel(job_id)
                 return self._json(200 if cancelled else 404, {"cancelled": cancelled})
+            if path == "/api/media/ensure-mp4":
+                try:
+                    return self._json(200, ensure_local_video_mp4(data.get("url")))
+                except ValueError as exc:
+                    return self._json(400, {"error": str(exc)})
             if path == "/api/generate/image":
                 if not str(data.get("prompt") or "").strip():
                     return self._json(400, {"error": "Prompt is required."})
