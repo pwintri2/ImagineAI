@@ -16,6 +16,7 @@
 <br>
 
 <a href="#-quick-start">Quick&nbsp;Start</a> ·
+<a href="#-screenshots">Screenshots</a> ·
 <a href="#-feature-tour">Features</a> ·
 <a href="#-engine-matrix">Engine&nbsp;Matrix</a> ·
 <a href="#-long-form-video">Long-Form&nbsp;Video</a> ·
@@ -35,6 +36,20 @@
 ImagineAI is a clean, fast creative cockpit that doesn't send every prompt to a cloud service by default. A **single-file, standard-library-only** Python server (`server.py`) serves a lightweight web UI, drives your local **ComfyUI** install, and keeps settings, keys, and generated media on your machine.
 
 Generate and edit stills with **Z-Image Turbo**, render text-to-image with **FLUX.1 Schnell FP8**, render text-to-video and image-to-video with **Wan 2.1 / Wan 2.2** — and when the GPU is busy, optionally reach for **Gemini, Google Veo, OpenAI Sora, Grok Imagine, Atlas Cloud, Seedance2.ai, ModelsLab, or Stability AI**.
+
+## 📸 Screenshots
+
+<p align="center">
+  <img src="assets/screenshots/image-studio.png" alt="ImagineAI Image tab with prompt controls and local/cloud engine choices" width="820">
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/video-studio.png" alt="ImagineAI Video tab with duration, engine, and advanced controls" width="820">
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/settings-panel.png" alt="ImagineAI Settings panel for local ComfyUI and optional cloud providers" width="820">
+</p>
 
 ## ⚡ Quick Start
 
