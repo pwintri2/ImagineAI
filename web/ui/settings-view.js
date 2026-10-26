@@ -1,5 +1,6 @@
 import { getState, setState } from '../state.js';
 import { getConfig, getSecrets, saveSecret, saveSettings } from '../services/api.js';
+import { SORA_RETIREMENT_MESSAGE, seedanceProviderLabel, seedanceService } from '../services/video-model-routing.js';
 import { showToast } from './toast-view.js';
 
 let panelEl, bodyEl, isOpen = false;
@@ -45,6 +46,7 @@ function render() {
   const c = s.config;
   const gem = secrets.providers?.gemini || {};
   const xai = secrets.providers?.xai || {};
+  const byteplus = secrets.providers?.byteplus || {};
   const otherProviders = getOtherProviders();
   const otherProvidersHtml = renderOtherProviders(otherProviders);
 
@@ -63,7 +65,7 @@ function render() {
           <span class="text-slate-500">image</span>
         </div>
         <div class="flex items-center justify-between">
-          <span class="text-slate-400">${dot(c.models?.image?.flux1_schnell_fp8)} FLUX.1 Schnell FP8</span>
+          <span class="text-slate-400">${dot(c.models?.image?.flux1_schnell || c.models?.image?.flux1_schnell_fp8)} FLUX.1 Schnell ${c.models?.image?.flux1_schnell_backend === 'gguf' ? 'Q4' : 'FP8'}</span>
           <span class="text-slate-500">image</span>
         </div>
         <div class="flex items-center justify-between">
@@ -87,7 +89,7 @@ function render() {
           <span class="text-slate-500">${c.atlasConfigured ? `key saved${c.atlasProvider ? ` (${escapeHtml(c.atlasProvider)})` : ''}` : 'no key'}</span>
         </div>
         <div class="flex items-center justify-between">
-          <span class="text-slate-400">${dot(c.seedanceConfigured)} Seedance</span>
+          <span class="text-slate-400">${dot(c.seedanceConfigured)} Seedance · ${seedanceProviderLabel(c)}</span>
           <span class="text-slate-500">${c.seedanceConfigured ? `key saved${c.seedanceProvider ? ` (${escapeHtml(c.seedanceProvider)})` : ''}` : 'no key'}</span>
         </div>
         <div class="flex items-center justify-between">
@@ -102,8 +104,8 @@ function render() {
     </section>
 
     <section class="space-y-3">
-      <h3 class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Gemini API key (cloud images + Gemini/Veo video)</h3>
-      <p class="text-[11px] text-slate-500">Stored locally on this machine (data/secrets.json, chmod 600). One key powers the Image tab's Gemini engine and the separate Gemini and Veo choices on the Video tab.</p>
+      <h3 class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Gemini API key (cloud images + Gemini Omni video)</h3>
+      <p class="text-[11px] text-slate-500">Stored locally on this machine (data/secrets.json, chmod 600). One key powers the Image tab's Gemini engine and the Gemini and Gemini Omni choices on the Video tab.</p>
       <div class="flex gap-2">
         <input id="geminiKeyInput" type="password" autocomplete="off" placeholder="${gem.configured ? 'Saved ' + escapeAttr(gem.hint || '') : 'AIza…'}"
           class="flex-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30" />
@@ -113,12 +115,12 @@ function render() {
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <div class="space-y-1.5">
           <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Gemini Image model</label>
-          <input id="geminiModelInput" type="text" value="${escapeAttr(c.geminiModel || '')}" placeholder="gemini-3.1-flash-image"
+          <input id="geminiModelInput" type="text" value="${escapeAttr(c.geminiModel || '')}" placeholder="gemini-nano-banana-2.1"
             class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30" />
         </div>
         <div class="space-y-1.5">
-          <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Gemini / Veo video model</label>
-          <input id="veoVideoModelInput" type="text" value="${escapeAttr(c.veoVideoModel || '')}" placeholder="veo-3.1-generate-preview"
+          <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Google video model</label>
+          <input id="veoVideoModelInput" type="text" value="${escapeAttr(c.veoVideoModel || '')}" placeholder="gemini-omni-1.1-flash"
             class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30" />
         </div>
       </div>
@@ -137,12 +139,12 @@ function render() {
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <div class="space-y-1.5">
           <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Grok image model</label>
-          <input id="xaiImageModelInput" type="text" value="${escapeAttr(c.xaiImageModel || '')}" placeholder="grok-imagine-image-quality"
+          <input id="xaiImageModelInput" type="text" value="${escapeAttr(c.xaiImageModel || '')}" placeholder="grok-imagine-image-2.0"
             class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30" />
         </div>
         <div class="space-y-1.5">
           <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Grok video model</label>
-          <input id="xaiVideoModelInput" type="text" value="${escapeAttr(c.xaiVideoModel || '')}" placeholder="grok-imagine-video"
+          <input id="xaiVideoModelInput" type="text" value="${escapeAttr(c.xaiVideoModel || '')}" placeholder="grok-imagine-video-1.5"
             class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30" />
         </div>
       </div>
@@ -150,11 +152,42 @@ function render() {
     </section>
 
     <section class="space-y-3">
+      <h3 class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Seedance video provider</h3>
+      <label for="seedanceServiceInput" class="block text-[11px] text-slate-400">Use the provider that issued your API key</label>
+      <select id="seedanceServiceInput" class="w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-sm text-slate-100">
+        <option value="seevio" ${seedanceService(c) === 'seevio' ? 'selected' : ''}>Seevio (Seedance2.ai)</option>
+        <option value="byteplus" ${seedanceService(c) === 'byteplus' ? 'selected' : ''}>BytePlus ModelArk</option>
+      </select>
+      <p class="text-[11px] text-slate-500">Video generation uses the selected provider's key and model. Seedance Still always uses Seevio.</p>
+      <div class="space-y-1.5">
+        <label for="byteplusKeyInput" class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">BytePlus ModelArk API key</label>
+        <div class="flex gap-2">
+          <input id="byteplusKeyInput" type="password" autocomplete="off" placeholder="${byteplus.configured ? 'Saved ' + escapeAttr(byteplus.hint || '') : 'Paste your BytePlus ModelArk key'}"
+            class="flex-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30" />
+          <button id="saveByteplusKey" type="button" class="px-3 py-2 rounded-xl bg-violet-500/20 hover:bg-violet-500/30 border border-violet-500/30 text-violet-300 text-xs font-medium transition">Save</button>
+        </div>
+        ${byteplus.configured ? '<button id="clearByteplusKey" type="button" class="text-[11px] text-red-400/70 hover:text-red-400 transition">Remove saved BytePlus key</button>' : ''}
+        <a href="https://ai.byteplus.com/ark/region:ap-southeast-1/apiKey" target="_blank" rel="noopener" class="text-[11px] text-violet-400/80 hover:text-violet-300 transition inline-block">Open BytePlus ModelArk API keys ↗</a>
+      </div>
+      <div class="space-y-1.5">
+        <label for="byteplusVideoModelInput" class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">BytePlus video model</label>
+        <input id="byteplusVideoModelInput" type="text" value="${escapeAttr(c.byteplusVideoModel || '')}" placeholder="dreamina-seedance-2-5-260628"
+          class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30" />
+      </div>
+      <div class="space-y-1.5">
+        <label for="seedanceVideoModelInput" class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Seevio video model</label>
+        <input id="seedanceVideoModelInput" type="text" value="${escapeAttr(c.seedanceVideoModel || '')}" placeholder="seedance-2-5"
+          class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30" />
+        <p class="text-[11px] text-slate-500">${c.seevioConfigured ? 'Seevio key saved.' : 'Add a Seevio key under Other API keys as seedance.'} This model also supplies Seedance Still.</p>
+      </div>
+    </section>
+
+    <section class="space-y-3">
       <div class="flex items-center justify-between gap-3">
         <h3 class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Other API keys</h3>
         <span class="text-[11px] text-slate-500">${otherProviders.length ? `${otherProviders.length} saved` : 'none saved'}</span>
       </div>
-      <p class="text-[11px] text-slate-500">Stored locally for supported providers and future helper scripts. Use <code class="text-slate-400">atlas</code> for Atlas Cloud; use <code class="text-slate-400">seedance</code> for Seedance2.ai; use <code class="text-slate-400">sdxl</code>, <code class="text-slate-400">modelslab</code>, <code class="text-slate-400">stable-diffusion-api</code>, <code class="text-slate-400">free-api</code>, <code class="text-slate-400">vrije-api</code>, or <code class="text-slate-400">wan2.6-t2v</code> for ModelsLab / Stable Diffusion API; use <code class="text-slate-400">stability</code> for Stability AI; use <code class="text-slate-400">sora</code> or <code class="text-slate-400">openai</code> for Sora video; use <code class="text-slate-400">elevenlabs</code> for ElevenLabs soundtracks.</p>
+      <p class="text-[11px] text-slate-500">Stored locally for supported providers and future helper scripts. Use <code class="text-slate-400">atlas</code> for Atlas Cloud; use <code class="text-slate-400">seedance</code> for Seedance2.ai; use <code class="text-slate-400">sdxl</code>, <code class="text-slate-400">modelslab</code>, <code class="text-slate-400">stable-diffusion-api</code>, <code class="text-slate-400">free-api</code>, <code class="text-slate-400">vrije-api</code>, or <code class="text-slate-400">wan2.6-t2v</code> for ModelsLab / Stable Diffusion API; use <code class="text-slate-400">stability</code> for Stability AI; use <code class="text-slate-400">elevenlabs</code> for ElevenLabs soundtracks.</p>
       <div class="space-y-2">
         <input id="customProviderInput" type="text" autocomplete="off" placeholder="Provider name, e.g. seedance"
           class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30" />
@@ -182,30 +215,20 @@ function render() {
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <div class="space-y-1.5">
             <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Atlas image model</label>
-            <input id="atlasImageModelInput" type="text" value="${escapeAttr(c.atlasImageModel || '')}" placeholder="seedream-3.0"
+            <input id="atlasImageModelInput" type="text" value="${escapeAttr(c.atlasImageModel || '')}" placeholder="bytedance/seedream-v5.0-pro/text-to-image"
               class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30" />
           </div>
           <div class="space-y-1.5">
             <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Atlas video model</label>
-            <input id="atlasVideoModelInput" type="text" value="${escapeAttr(c.atlasVideoModel || '')}" placeholder="alibaba/wan-2.7/text-to-video"
+            <input id="atlasVideoModelInput" type="text" value="${escapeAttr(c.atlasVideoModel || '')}" placeholder="alibaba/wan-3.0/text-to-video"
               class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30" />
           </div>
         </div>
       ` : ''}
-      ${c.seedanceConfigured ? `
-        <div class="space-y-1.5">
-          <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Seedance video model</label>
-          <input id="seedanceVideoModelInput" type="text" value="${escapeAttr(c.seedanceVideoModel || '')}" placeholder="seedance-2-0"
-            class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30" />
-          <p class="text-[10px] text-slate-600">Use <code class="text-slate-400">seedance-2-0</code> or <code class="text-slate-400">seedance-2-0-fast</code>.</p>
-        </div>
-      ` : ''}
       ${c.soraConfigured ? `
         <div class="space-y-1.5">
-          <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Sora video model</label>
-          <input id="soraVideoModelInput" type="text" value="${escapeAttr(c.soraVideoModel || '')}" placeholder="sora-2"
-            class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30" />
-          <p class="text-[10px] text-slate-600">Use <code class="text-slate-400">sora-2</code> or <code class="text-slate-400">sora-2-pro</code>. Note: OpenAI retires the Sora API on September 24, 2026.</p>
+          <p class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Sora · retired</p>
+          <p class="text-[11px] text-slate-500">${escapeHtml(SORA_RETIREMENT_MESSAGE)} Your saved key does not enable video generation.</p>
         </div>
       ` : ''}
       ${c.stabilityConfigured ? `
@@ -238,6 +261,10 @@ function render() {
   document.getElementById('clearGeminiKey')?.addEventListener('click', handleClearGeminiKey);
   document.getElementById('saveXaiKey')?.addEventListener('click', handleSaveXaiKey);
   document.getElementById('clearXaiKey')?.addEventListener('click', handleClearXaiKey);
+  document.getElementById('saveByteplusKey')?.addEventListener('click', handleSaveByteplusKey);
+  document.getElementById('clearByteplusKey')?.addEventListener('click', handleClearByteplusKey);
+  document.getElementById('seedanceServiceInput')?.addEventListener('change', handleSaveSeedanceService);
+  document.getElementById('byteplusVideoModelInput')?.addEventListener('change', handleSaveByteplusVideoModel);
   document.getElementById('saveCustomKey')?.addEventListener('click', handleSaveCustomKey);
   document.querySelectorAll('[data-clear-secret]').forEach((button) => {
     button.addEventListener('click', handleClearCustomKey);
@@ -252,16 +279,15 @@ function render() {
   document.getElementById('atlasVideoModelInput')?.addEventListener('change', handleSaveAtlasVideoModel);
   document.getElementById('seedanceVideoModelInput')?.addEventListener('change', handleSaveSeedanceVideoModel);
   document.getElementById('veoVideoModelInput')?.addEventListener('change', handleSaveVeoVideoModel);
-  document.getElementById('soraVideoModelInput')?.addEventListener('change', handleSaveSoraVideoModel);
   document.getElementById('stabilityImageModelInput')?.addEventListener('change', handleSaveStabilityImageModel);
   document.getElementById('modelslabImageModelInput')?.addEventListener('change', handleSaveModelslabImageModel);
   document.getElementById('modelslabVideoModelInput')?.addEventListener('change', handleSaveModelslabVideoModel);
 }
 
 function getOtherProviders() {
-  if (Array.isArray(secrets.customProviders)) return secrets.customProviders;
+  if (Array.isArray(secrets.customProviders)) return secrets.customProviders.filter((item) => item.provider !== 'byteplus');
   return Object.entries(secrets.providers || {})
-    .filter(([provider]) => !['gemini', 'xai'].includes(provider))
+    .filter(([provider]) => !['gemini', 'xai', 'byteplus'].includes(provider))
     .map(([provider, meta]) => ({ provider, ...(meta || {}) }));
 }
 
@@ -324,6 +350,47 @@ async function handleClearXaiKey() {
   } catch (e) { showToast(e.message || 'Could not remove key', 'error'); }
 }
 
+async function handleSaveByteplusKey() {
+  const input = document.getElementById('byteplusKeyInput');
+  const key = input?.value?.trim();
+  if (!key) { showToast('Paste your BytePlus ModelArk key first', 'info'); return; }
+  try {
+    secrets = await saveSecret('byteplus', key);
+    if (input) input.value = '';
+    showToast('BytePlus ModelArk key saved', 'success');
+    await refresh();
+  } catch (e) { showToast(e.message || 'Could not save BytePlus key', 'error'); }
+}
+
+async function handleClearByteplusKey() {
+  try {
+    secrets = await saveSecret('byteplus', '');
+    showToast('BytePlus key removed', 'info');
+    await refresh();
+  } catch (e) { showToast(e.message || 'Could not remove BytePlus key', 'error'); }
+}
+
+async function handleSaveSeedanceService(e) {
+  try {
+    await saveSettings({ seedanceService: e.target.value });
+    showToast('Seedance provider saved', 'success');
+    await refresh();
+  } catch (err) {
+    showToast(err.message || 'Could not save provider', 'error');
+    render();
+  }
+}
+
+async function handleSaveByteplusVideoModel(e) {
+  const model = e.target.value.trim();
+  if (!model) return;
+  try {
+    await saveSettings({ byteplusVideoModel: model });
+    showToast('BytePlus video model saved', 'success');
+    await refresh();
+  } catch (err) { showToast(err.message || 'Could not save model', 'error'); }
+}
+
 async function handleSaveCustomKey() {
   const providerInput = document.getElementById('customProviderInput');
   const keyInput = document.getElementById('customKeyInput');
@@ -331,7 +398,7 @@ async function handleSaveCustomKey() {
   const key = keyInput?.value?.trim();
   if (!provider) { showToast('Enter a provider name first', 'info'); return; }
   if (!key) { showToast('Paste a key first', 'info'); return; }
-  if (['gemini', 'xai'].includes(provider.toLowerCase())) {
+  if (['gemini', 'xai', 'byteplus'].includes(provider.toLowerCase())) {
     showToast('Use the dedicated field above for that provider', 'info');
     return;
   }
@@ -409,7 +476,7 @@ async function handleSaveSeedanceVideoModel(e) {
   if (!model) return;
   try {
     await saveSettings({ seedanceVideoModel: model });
-    showToast('Seedance video model saved', 'success');
+    showToast('Seevio video model saved', 'success');
     await refresh();
   } catch (err) { showToast(err.message || 'Could not save', 'error'); }
 }
@@ -419,17 +486,7 @@ async function handleSaveVeoVideoModel(e) {
   if (!model) return;
   try {
     await saveSettings({ veoVideoModel: model });
-    showToast('Veo video model saved', 'success');
-    await refresh();
-  } catch (err) { showToast(err.message || 'Could not save', 'error'); }
-}
-
-async function handleSaveSoraVideoModel(e) {
-  const model = e.target.value.trim();
-  if (!model) return;
-  try {
-    await saveSettings({ soraVideoModel: model });
-    showToast('Sora video model saved', 'success');
+    showToast('Google video model saved', 'success');
     await refresh();
   } catch (err) { showToast(err.message || 'Could not save', 'error'); }
 }

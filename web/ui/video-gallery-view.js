@@ -1,8 +1,10 @@
+import { ensureVideoMp4 } from '../services/api.js';
 import {
   editionFromSearch,
   videoMediaType,
   videoPlaybackCandidates,
 } from '../services/video-playback.js';
+import { showToast } from './toast-view.js';
 
 let galleryEl;
 let cancelHandler = null;
@@ -84,8 +86,7 @@ export function renderResults(videos, meta = {}) {
   const video = videos[0];
   if (!video) { renderError('No video was produced.'); return; }
   const baseName = defaultBaseName(meta.prompt, 'imagineai-video');
-  const downloadUrl = video.mp4Url || video.url;
-  const downloadExt = extensionFromUrl(downloadUrl, video.mp4Url ? '.mp4' : '.webm');
+  const saveTarget = videoMp4SaveTarget(video);
   const segments = segmentList(video);
   const segmentFallback = video.stitchStatus === 'segments' && segments.length > 1;
   const playbackUrls = videoPlaybackCandidates(video, editionFromSearch(window.location.search));
@@ -102,8 +103,12 @@ export function renderResults(videos, meta = {}) {
         <div class="flex gap-2">
           <input id="videoFileName" type="text" value="${escapeAttr(baseName)}"
             class="min-w-0 flex-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30" />
-          <button type="button" data-save-video data-url="${escapeAttr(downloadUrl)}" data-ext="${escapeAttr(downloadExt)}"
-            class="shrink-0 rounded-lg border border-white/10 bg-white/10 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-white/15">Save</button>
+          ${saveTarget ? `
+          <button type="button" data-save-video data-url="${escapeAttr(saveTarget.url)}"${saveTarget.convertMp4 ? ' data-convert-mp4="true"' : ''}
+            class="shrink-0 rounded-lg border border-white/10 bg-white/10 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-white/15 disabled:cursor-wait disabled:opacity-60">Save MP4</button>
+          ` : `
+          <span class="shrink-0 px-2 py-1.5 text-xs text-slate-500">No video file</span>
+          `}
         </div>
       </div>
       ${segmentFallback ? renderSegmentFallback(segments, baseName, video.stitchWarning) : ''}
@@ -150,7 +155,7 @@ function wireVideoPlayback(playbackUrls) {
   }
 }
 
-function handleClick(e) {
+async function handleClick(e) {
   const cancelBtn = e.target.closest('[data-cancel-video]');
   if (cancelBtn) {
     if (!cancelBtn.disabled && cancelHandler) cancelHandler();
@@ -159,7 +164,7 @@ function handleClick(e) {
   const btn = e.target.closest('[data-save-video]');
   if (!btn) return;
   const input = document.getElementById('videoFileName');
-  downloadMedia(btn.dataset.url || '', btn.dataset.name || input?.value || 'imagineai-video', btn.dataset.ext || '.mp4');
+  await saveVideoAsMp4(btn, btn.dataset.name || input?.value || 'imagineai-video');
 }
 
 export function renderError(message) {
@@ -189,14 +194,14 @@ function segmentList(video) {
 
 function renderSegmentFallback(segments, baseName, warning) {
   const items = segments.map((segment, index) => {
-    const url = segment.mp4Url || segment.url;
-    const ext = extensionFromUrl(url, segment.mp4Url ? '.mp4' : '.webm');
+    const target = videoMp4SaveTarget(segment);
     const name = `${baseName}-part-${index + 1}`;
+    if (!target) return '';
     return `
       <div class="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
         <span class="text-xs text-slate-300">Part ${index + 1}</span>
-        <button type="button" data-save-video data-url="${escapeAttr(url)}" data-ext="${escapeAttr(ext)}" data-name="${escapeAttr(name)}"
-          class="rounded-lg border border-white/10 bg-white/10 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-white/15">Save</button>
+        <button type="button" data-save-video data-url="${escapeAttr(target.url)}" data-name="${escapeAttr(name)}"${target.convertMp4 ? ' data-convert-mp4="true"' : ''}
+          class="rounded-lg border border-white/10 bg-white/10 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-white/15 disabled:cursor-wait disabled:opacity-60">Save MP4</button>
       </div>
     `;
   }).join('');
@@ -208,8 +213,46 @@ function renderSegmentFallback(segments, baseName, warning) {
   `;
 }
 
-function downloadMedia(url, rawName, fallbackExt) {
-  const filename = ensureExtension(safeFileBase(rawName), fallbackExt);
+export function videoMp4SaveTarget(video) {
+  const mp4Url = typeof video?.mp4Url === 'string' ? video.mp4Url.trim() : '';
+  if (extensionFromUrl(mp4Url, '') === '.mp4') return { url: mp4Url, convertMp4: false };
+  const regularUrl = typeof video?.url === 'string' ? video.url.trim() : '';
+  const url = mp4Url || regularUrl;
+  if (!url) return null;
+  return { url, convertMp4: extensionFromUrl(url, '') !== '.mp4' };
+}
+
+async function saveVideoAsMp4(btn, rawName) {
+  let mp4Url = btn.dataset.url || '';
+  if (!mp4Url) return;
+
+  if (btn.dataset.convertMp4 === 'true') {
+    const originalLabel = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Making MP4…';
+    try {
+      const result = await ensureVideoMp4(mp4Url);
+      mp4Url = result.mp4Url || '';
+      if (extensionFromUrl(mp4Url, '') !== '.mp4') throw new Error('No valid MP4 was returned.');
+      btn.dataset.url = mp4Url;
+      delete btn.dataset.convertMp4;
+      btn.textContent = 'Save MP4';
+      showToast('MP4 ready', 'success');
+    } catch (err) {
+      console.warn('Could not create MP4:', err);
+      showToast(err.message || 'Could not make this video into an MP4.', 'error');
+      btn.textContent = originalLabel;
+      return;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  downloadMedia(mp4Url, rawName);
+}
+
+function downloadMedia(url, rawName) {
+  const filename = ensureExtension(safeFileBase(rawName), '.mp4');
   const href = withDownloadName(url, filename);
   const a = document.createElement('a');
   a.href = href;
@@ -227,7 +270,8 @@ function withDownloadName(url, filename) {
 
 function extensionFromUrl(url, fallback) {
   try {
-    const u = new URL(url, window.location.origin);
+    const origin = globalThis.window?.location?.origin || 'http://localhost';
+    const u = new URL(url, origin);
     const candidate = u.searchParams.get('name') || u.searchParams.get('filename') || u.pathname;
     const match = String(candidate).match(/\.([a-z0-9]{2,5})$/i);
     return match ? `.${match[1].toLowerCase()}` : fallback;

@@ -63,7 +63,7 @@ class VeoTests(unittest.TestCase):
                           return_value=("/api/local-media?name=veo.mp4", Path("/tmp/veo.mp4"))), \
              patch.object(server, "transcode_mp4_path_to_webm", return_value="/api/local-media?name=veo.webm"):
             result = server.veo_generate_video_clip(
-                "a red kite over dunes", "tall", 8, "", "secret",
+                "a red kite over dunes", "tall", 8, "veo-3.1-generate-preview", "secret",
                 negative_prompt="blurry", seed=42)
 
         self.assertEqual(result["url"], "/api/local-media?name=veo.webm")
@@ -95,7 +95,7 @@ class VeoTests(unittest.TestCase):
              patch.object(server, "veo_download_video",
                           return_value=("/api/local-media?name=veo.mp4", Path("/tmp/veo.mp4"))), \
              patch.object(server, "transcode_mp4_path_to_webm", return_value=None):
-            result = server.veo_generate_video_clip("a kite", "wide", 8, "", "secret",
+            result = server.veo_generate_video_clip("a kite", "wide", 8, "veo-3.1-generate-preview", "secret",
                                                     negative_prompt="blurry")
 
         self.assertEqual(result["url"], "/api/local-media?name=veo.mp4")

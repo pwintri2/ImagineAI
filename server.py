@@ -35,6 +35,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+import byteplus
+
 APP_DIR = Path(__file__).resolve().parent
 WEB_DIR = APP_DIR / "web"
 DATA_DIR = Path(os.environ.get("IMAGINEAI_DATA_DIR", str(APP_DIR / "data")))
@@ -43,27 +45,35 @@ SECRETS_FILE = DATA_DIR / "secrets.json"
 SETTINGS_FILE = DATA_DIR / "settings.json"
 
 DEFAULT_COMFY_URL = os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188").rstrip("/")
-DEFAULT_GEMINI_MODEL = os.environ.get("GEMINI_IMAGE_MODEL", "gemini-3.1-flash-image")
+DEFAULT_GEMINI_MODEL = os.environ.get("GEMINI_IMAGE_MODEL", "gemini-nano-banana-2.1")
 GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
-DEFAULT_XAI_IMAGE_MODEL = os.environ.get("XAI_IMAGE_MODEL", "grok-imagine-image-quality")
-DEFAULT_XAI_VIDEO_MODEL = os.environ.get("XAI_VIDEO_MODEL", "grok-imagine-video")
+DEFAULT_XAI_IMAGE_MODEL = os.environ.get("XAI_IMAGE_MODEL", "grok-imagine-image-2.0")
+DEFAULT_XAI_VIDEO_MODEL = os.environ.get("XAI_VIDEO_MODEL", "grok-imagine-video-1.5")
 XAI_BASE = os.environ.get("XAI_BASE_URL", "https://api.x.ai/v1").rstrip("/")
-DEFAULT_ATLAS_IMAGE_MODEL = os.environ.get("ATLAS_IMAGE_MODEL", os.environ.get("ATLASCLOUD_IMAGE_MODEL", "seedream-3.0"))
+DEFAULT_ATLAS_IMAGE_MODEL = os.environ.get("ATLAS_IMAGE_MODEL", os.environ.get("ATLASCLOUD_IMAGE_MODEL", "bytedance/seedream-v5.0-pro/text-to-image"))
 # Used when the user supplies a reference image; must be an Atlas IMAGE-TO-IMAGE
 # model (they take an "images" array, unlike the text-to-image ids).
-DEFAULT_ATLAS_IMAGE_EDIT_MODEL = os.environ.get("ATLAS_IMAGE_EDIT_MODEL", "bytedance/seedream-v4.5/edit")
+DEFAULT_ATLAS_IMAGE_EDIT_MODEL = os.environ.get("ATLAS_IMAGE_EDIT_MODEL", "bytedance/seedream-v5.0-pro/edit")
 DEFAULT_ATLAS_VIDEO_MODEL = os.environ.get(
     "ATLAS_VIDEO_MODEL",
-    os.environ.get("ATLASCLOUD_VIDEO_MODEL", "alibaba/wan-2.7/text-to-video"),
+    os.environ.get("ATLASCLOUD_VIDEO_MODEL", "alibaba/wan-3.0/text-to-video"),
 )
 DEFAULT_ATLAS_I2V_MODEL = os.environ.get(
     "ATLAS_I2V_MODEL",
-    os.environ.get("ATLASCLOUD_I2V_MODEL", "alibaba/wan-2.7/image-to-video"),
+    os.environ.get(
+        "ATLASCLOUD_I2V_MODEL",
+        f"{DEFAULT_ATLAS_VIDEO_MODEL.rsplit('/', 1)[0]}/image-to-video"
+        if DEFAULT_ATLAS_VIDEO_MODEL.endswith("/text-to-video")
+        else "alibaba/wan-3.0/image-to-video",
+    ),
 )
 DEFAULT_ATLAS_WAN27_RESOLUTION = os.environ.get("ATLAS_WAN27_RESOLUTION", "1080P")
 DEFAULT_ATLAS_WAN27_AUDIO = os.environ.get("ATLAS_WAN27_AUDIO", "")
 DEFAULT_ATLAS_WAN27_PROMPT_EXTEND = os.environ.get("ATLAS_WAN27_PROMPT_EXTEND", "true").strip().lower() not in ("0", "false", "no", "off")
 DEFAULT_ATLAS_WAN27_SEED = os.environ.get("ATLAS_WAN27_SEED", "-1")
+DEFAULT_ATLAS_WAN30_RESOLUTION = os.environ.get("ATLAS_WAN30_RESOLUTION", "1080p")
+DEFAULT_ATLAS_WAN30_AUDIO = os.environ.get("ATLAS_WAN30_AUDIO", "true").strip().lower() not in ("0", "false", "no", "off")
+DEFAULT_ATLAS_WAN30_SEED = os.environ.get("ATLAS_WAN30_SEED", "-1")
 ATLAS_BASE = os.environ.get("ATLAS_BASE_URL", os.environ.get("ATLASCLOUD_BASE_URL", "https://api.atlascloud.ai/api/v1")).rstrip("/")
 # Atlas sits behind Cloudflare, whose bot filter bans non-browser signatures
 # (403 "error code: 1010") — send a browser-like UA on every Atlas request.
@@ -74,15 +84,22 @@ DEFAULT_MODELSLAB_IMAGE_MODEL = os.environ.get("MODELSLAB_IMAGE_MODEL", "sdxl")
 DEFAULT_MODELSLAB_VIDEO_MODEL = os.environ.get("MODELSLAB_VIDEO_MODEL", "wan2.2")
 DEFAULT_MODELSLAB_WAN26_VIDEO_MODEL = os.environ.get("MODELSLAB_WAN26_VIDEO_MODEL", "wan2.6-t2v")
 MODELSLAB_BASE = os.environ.get("MODELSLAB_BASE_URL", "https://modelslab.com").rstrip("/")
-DEFAULT_SEEDANCE_VIDEO_MODEL = os.environ.get("SEEDANCE_VIDEO_MODEL", os.environ.get("SEEDANCE2_VIDEO_MODEL", "seedance-2-0"))
+DEFAULT_SEEDANCE_VIDEO_MODEL = os.environ.get("SEEDANCE_VIDEO_MODEL", os.environ.get("SEEDANCE2_VIDEO_MODEL", "seedance-2-5"))
 DEFAULT_SEEDANCE_RESOLUTION = os.environ.get("SEEDANCE_RESOLUTION", os.environ.get("SEEDANCE2_RESOLUTION", "720p"))
-SEEDANCE_BASE = os.environ.get("SEEDANCE_BASE_URL", os.environ.get("SEEDANCE2_BASE_URL", "https://api.seedance2.ai")).rstrip("/")
+SEEDANCE_BASE = os.environ.get("SEEDANCE_BASE_URL", os.environ.get("SEEDANCE2_BASE_URL", "https://api.seevio.ai")).rstrip("/")
+BYTEPLUS_BASE = os.environ.get("BYTEPLUS_BASE_URL", byteplus.DEFAULT_BASE).rstrip("/")
+DEFAULT_BYTEPLUS_VIDEO_MODEL = os.environ.get("BYTEPLUS_VIDEO_MODEL", byteplus.DEFAULT_VIDEO_MODEL)
+DEFAULT_BYTEPLUS_RESOLUTION = os.environ.get("BYTEPLUS_RESOLUTION", "720p")
 # Veo video runs on the same Gemini API key the image side already uses.
 GEMINI_API_BASE = os.environ.get("GEMINI_API_BASE_URL", "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
-DEFAULT_VEO_VIDEO_MODEL = os.environ.get("VEO_VIDEO_MODEL", "veo-3.1-generate-preview")
+DEFAULT_VEO_VIDEO_MODEL = os.environ.get("VEO_VIDEO_MODEL", "gemini-omni-1.1-flash")
 DEFAULT_VEO_RESOLUTION = os.environ.get("VEO_RESOLUTION", "720p")
 OPENAI_BASE = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 DEFAULT_SORA_VIDEO_MODEL = os.environ.get("SORA_VIDEO_MODEL", "sora-2")
+SORA_RETIREMENT_MESSAGE = (
+    "OpenAI retired the Sora Videos API on September 24, 2026. "
+    "Choose Google video, Grok Imagine, Atlas, Seedance, or an installed local video model."
+)
 ELEVENLABS_BASE = os.environ.get("ELEVENLABS_BASE_URL", "https://api.elevenlabs.io/v1").rstrip("/")
 # Local Ollama — only used to unload its models when the user empties the GPU.
 OLLAMA_BASE = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
@@ -105,10 +122,12 @@ XAI_MAX_SECONDS_PER_REQUEST = 15
 XAI_MAX_STITCHED_SECONDS = 60
 MODELSLAB_MAX_STITCHED_SECONDS = 120  # cloud (no local VRAM); stitched from ~5s ModelsLab segments
 SEEDANCE_MAX_SECONDS_PER_REQUEST = 15
+SEEDANCE25_MAX_SECONDS_PER_REQUEST = 30
 SEEDANCE_MAX_STITCHED_SECONDS = 30
 SEEDANCE_STILL_SECONDS = 4
 ATLAS_MAX_SECONDS_PER_REQUEST = 10
 ATLAS_WAN27_MAX_SECONDS_PER_REQUEST = 15
+ATLAS_WAN30_MAX_SECONDS_PER_REQUEST = 30
 ATLAS_MAX_STITCHED_SECONDS = 60
 VEO_MAX_SECONDS_PER_REQUEST = 8
 VEO_MAX_STITCHED_SECONDS = 60
@@ -118,7 +137,7 @@ SORA_VIDEO_TIMEOUT = float(os.environ.get("IMAGINEAI_SORA_VIDEO_TIMEOUT", "1800"
 ELEVENLABS_TIMEOUT = float(os.environ.get("IMAGINEAI_ELEVENLABS_TIMEOUT", "600"))
 # Director mode: one long film assembled scene by scene across engines.
 DIRECTOR_MAX_SECONDS = int(os.environ.get("IMAGINEAI_DIRECTOR_MAX_SECONDS", "180"))
-DIRECTOR_PLANNER_MODEL = os.environ.get("IMAGINEAI_DIRECTOR_PLANNER_MODEL", "gemini-3.5-flash")
+DIRECTOR_PLANNER_MODEL = os.environ.get("IMAGINEAI_DIRECTOR_PLANNER_MODEL", "gemini-3.8-flash")
 ATLAS_IMAGE_TIMEOUT = float(os.environ.get("IMAGINEAI_ATLAS_IMAGE_TIMEOUT", "600"))
 ATLAS_VIDEO_TIMEOUT = float(os.environ.get("IMAGINEAI_ATLAS_VIDEO_TIMEOUT", "1200"))
 # Wan's output moderation (copyright/IP/sensitive-content) is stochastic and often
@@ -176,8 +195,8 @@ class JobCancelled(Exception):
 SETTINGS_LOCK = threading.Lock()
 SECRETS_LOCK = threading.Lock()
 
-KNOWN_SECRET_PROVIDERS = ("gemini", "xai")
-SECRET_ENV_KEYS = {"gemini": "GEMINI_API_KEY", "xai": "XAI_API_KEY"}
+KNOWN_SECRET_PROVIDERS = ("gemini", "xai", "byteplus")
+SECRET_ENV_KEYS = {"gemini": "GEMINI_API_KEY", "xai": "XAI_API_KEY", "byteplus": "BYTEPLUS_API_KEY"}
 ATLAS_SECRET_PROVIDERS = ("atlas", "atlascloud", "atlas-cloud")
 STABILITY_SECRET_PROVIDERS = ("stability", "stability-ai")
 MODELSLAB_SECRET_PROVIDERS = (
@@ -201,6 +220,7 @@ MODELSLAB_SECRET_PROVIDERS = (
     "wan26_t2v",
 )
 SEEDANCE_SECRET_PROVIDERS = (
+    "seevio",
     "seedance",
     "seedance2",
     "seedance-2",
@@ -209,6 +229,7 @@ SEEDANCE_SECRET_PROVIDERS = (
     "seedance2.ai",
     "seedance-2-0",
 )
+BYTEPLUS_SECRET_PROVIDERS = ("byteplus", "modelark", "ark")
 SORA_SECRET_PROVIDERS = ("sora", "openai", "open-ai", "sora-2", "sora2")
 ELEVENLABS_SECRET_PROVIDERS = ("elevenlabs", "eleven-labs", "eleven", "11labs", "elevenlabs-api")
 MODELSLAB_DIRECT_VIDEO_MODELS = {
@@ -226,7 +247,14 @@ DEFAULT_NEGATIVE_VIDEO = (
     "walking backwards, nude, NSFW"
 )
 FLUX_SCHNELL_FP8_CHECKPOINT = os.environ.get("IMAGINEAI_FLUX_CHECKPOINT", "flux1-schnell-fp8.safetensors")
-FLUX_SCHNELL_TITLE = "FLUX.1 Schnell FP8"
+FLUX_SCHNELL_GGUF_UNET = os.environ.get("IMAGINEAI_FLUX_GGUF_UNET", "flux1-schnell-Q4_K_S.gguf")
+FLUX_SCHNELL_GGUF_T5 = os.environ.get(
+    "IMAGINEAI_FLUX_GGUF_T5",
+    "t5-v1_1-xxl-encoder-Q4_K_S.gguf",
+)
+FLUX_SCHNELL_CLIP_L = os.environ.get("IMAGINEAI_FLUX_CLIP_L", "clip_l.safetensors")
+FLUX_SCHNELL_VAE = os.environ.get("IMAGINEAI_FLUX_VAE", "ae.safetensors")
+FLUX_SCHNELL_TITLE = "FLUX.1 Schnell"
 
 ASPECT_TO_SIZE = {
     "square": (1024, 1024),
@@ -234,6 +262,13 @@ ASPECT_TO_SIZE = {
     "portrait": (832, 1216),
     "wide": (1280, 720),
     "tall": (720, 1280),
+}
+FLUX_GGUF_ASPECT_TO_SIZE = {
+    "square": (512, 512),
+    "landscape": (576, 432),
+    "portrait": (432, 576),
+    "wide": (640, 368),
+    "tall": (368, 640),
 }
 TI2V_ASPECT_TO_SIZE = {
     "square": (768, 768),
@@ -265,6 +300,14 @@ ASPECT_TO_ATLAS_EDIT_SIZE = {
     "portrait": "1728*2304",
     "wide": "2848*1600",
     "tall": "1600*2848",
+}
+# Seedream 5.0 Pro uses a different, fixed set of size presets from 4.x.
+ASPECT_TO_ATLAS_SEEDREAM5_SIZE = {
+    "square": "2048*2048",
+    "landscape": "2368*1776",
+    "portrait": "1776*2368",
+    "wide": "2816*1584",
+    "tall": "1584*2816",
 }
 ASPECT_TO_MODELSLAB_IMAGE_SIZE = {
     "square": (768, 768),
@@ -333,6 +376,8 @@ def load_settings() -> dict[str, Any]:
         "modelslabImageModel": DEFAULT_MODELSLAB_IMAGE_MODEL,
         "modelslabVideoModel": DEFAULT_MODELSLAB_VIDEO_MODEL,
         "seedanceVideoModel": DEFAULT_SEEDANCE_VIDEO_MODEL,
+        "seedanceService": os.environ.get("SEEDANCE_SERVICE", "seevio"),
+        "byteplusVideoModel": DEFAULT_BYTEPLUS_VIDEO_MODEL,
         "veoVideoModel": DEFAULT_VEO_VIDEO_MODEL,
         "soraVideoModel": DEFAULT_SORA_VIDEO_MODEL,
         "defaultImageEngine": "local",
@@ -359,16 +404,42 @@ def load_settings() -> dict[str, Any]:
     }
     if str(defaults.get("atlasVideoModel") or "").strip().lower() in legacy_atlas_video_models:
         defaults["atlasVideoModel"] = DEFAULT_ATLAS_VIDEO_MODEL
-    # Google shut the -preview image ids down (June 2026); map any stored one to
-    # the GA successor so saved settings keep generating.
-    legacy_gemini_image_models = {
-        "gemini-3.1-flash-image-preview",
-        "gemini-3-pro-image-preview",
-        "gemini-2.0-flash-preview-image-generation",
+    return migrate_model_settings(defaults)
+
+
+def migrate_model_settings(settings: dict[str, Any]) -> dict[str, Any]:
+    """Refresh known previous defaults while preserving custom model IDs.
+
+    Reading does not rewrite the settings file. The next explicit settings save
+    persists the resolved values; environment defaults remain configurable.
+    """
+    migrations = {
+        "geminiModel": (DEFAULT_GEMINI_MODEL, {
+            "gemini-2.0-flash-preview-image-generation", "gemini-2.5-flash-image",
+            "gemini-3.1-flash-image-preview", "gemini-3.1-flash-image",
+        }),
+        "veoVideoModel": (DEFAULT_VEO_VIDEO_MODEL, {
+            "veo-2.0-generate-001", "veo-3.0-generate-001", "veo-3.0-fast-generate-001",
+            "veo-3.0-generate-preview", "veo-3.0-fast-generate-preview",
+            "veo-3.1-generate-preview", "veo-3.1-fast-generate-preview",
+            "veo-3.1-lite-generate-preview", "gemini-omni-flash-preview",
+        }),
+        "xaiImageModel": (DEFAULT_XAI_IMAGE_MODEL, {
+            "grok-imagine-image", "grok-imagine-image-pro", "grok-imagine-image-quality",
+        }),
+        "xaiVideoModel": (DEFAULT_XAI_VIDEO_MODEL, {"grok-imagine-video"}),
+        "atlasImageModel": (DEFAULT_ATLAS_IMAGE_MODEL, {"seedream-3.0"}),
+        "atlasImageEditModel": (DEFAULT_ATLAS_IMAGE_EDIT_MODEL, {"bytedance/seedream-v4.5/edit"}),
+        "atlasVideoModel": (DEFAULT_ATLAS_VIDEO_MODEL, {"alibaba/wan-2.7/text-to-video"}),
+        "seedanceVideoModel": (DEFAULT_SEEDANCE_VIDEO_MODEL, {"seedance-2-0"}),
     }
-    if str(defaults.get("geminiModel") or "").strip().lower() in legacy_gemini_image_models:
-        defaults["geminiModel"] = DEFAULT_GEMINI_MODEL
-    return defaults
+    resolved = dict(settings)
+    if str(resolved.get("geminiModel") or "").strip().lower() == "gemini-3-pro-image-preview":
+        resolved["geminiModel"] = "gemini-3-pro-image"
+    for name, (replacement, previous) in migrations.items():
+        if str(resolved.get(name) or "").strip().lower() in previous:
+            resolved[name] = replacement
+    return resolved
 
 
 def valid_http_url(url: str) -> bool:
@@ -383,15 +454,18 @@ def save_settings(patch: dict[str, Any]) -> dict[str, Any]:
     current = load_settings()
     for key in ("comfyUrl", "geminiModel", "xaiImageModel", "xaiVideoModel", "atlasImageModel", "atlasImageEditModel",
                 "atlasVideoModel", "stabilityImageModel",
-                "modelslabImageModel", "modelslabVideoModel", "seedanceVideoModel",
+                "modelslabImageModel", "modelslabVideoModel", "seedanceVideoModel", "seedanceService", "byteplusVideoModel",
                 "veoVideoModel", "soraVideoModel", "defaultImageEngine"):
         if key in patch and isinstance(patch[key], str) and patch[key].strip():
             value = patch[key].strip()
+            if key == "seedanceService" and value not in ("seevio", "byteplus"):
+                raise ValueError("Seedance provider must be seevio or byteplus.")
             if key == "comfyUrl":
                 value = value.rstrip("/")
                 if not valid_http_url(value):
                     raise ValueError("ComfyUI URL must be an http(s):// address.")
             current[key] = value
+    current = migrate_model_settings(current)
     with SETTINGS_LOCK:
         ensure_dirs()
         SETTINGS_FILE.write_text(json.dumps(current, indent=2), "utf-8")
@@ -492,7 +566,8 @@ def modelslab_key() -> tuple[str, str]:
 
 
 def seedance_key() -> tuple[str, str]:
-    for env_key in ("SEEDANCE_API_KEY", "SEEDANCE2_API_KEY", "SEEDANCE2AI_API_KEY"):
+    """Seevio credentials only; BytePlus keys must never fall through here."""
+    for env_key in ("SEEVIO_API_KEY", "SEEDANCE_API_KEY", "SEEDANCE2_API_KEY", "SEEDANCE2AI_API_KEY"):
         if os.environ.get(env_key):
             return os.environ.get(env_key, ""), env_key
     secrets = load_secrets()
@@ -500,6 +575,21 @@ def seedance_key() -> tuple[str, str]:
         if secrets.get(provider):
             return secrets[provider], provider
     return "", "env"
+
+
+def byteplus_key() -> tuple[str, str]:
+    for env_key in ("BYTEPLUS_API_KEY", "ARK_API_KEY"):
+        if os.environ.get(env_key):
+            return os.environ.get(env_key, ""), env_key
+    secrets = load_secrets()
+    for provider in BYTEPLUS_SECRET_PROVIDERS:
+        if secrets.get(provider):
+            return secrets[provider], provider
+    return "", "env"
+
+
+def seedance_service(settings: dict[str, Any]) -> str:
+    return "byteplus" if settings.get("seedanceService") == "byteplus" else "seevio"
 
 
 def sora_key() -> tuple[str, str]:
@@ -767,13 +857,33 @@ def detect_models() -> dict[str, Any]:
     clip_names = listed(clips, "clip_name")
     vae_names = listed(vaes, "vae_name")
     checkpoint_names = listed(checkpoints, "ckpt_name")
+    gguf_unet_names: set[str] = set()
+    gguf_clip_names: set[str] = set()
+    try:
+        gguf_unets = comfy_request("/object_info/UnetLoaderGGUF", timeout=8)
+        gguf_clips = comfy_request("/object_info/DualCLIPLoaderGGUF", timeout=8)
+        gguf_unet_names = listed(gguf_unets, "unet_name")
+        gguf_clip_names = listed(gguf_clips, "clip_name1")
+    except Exception:
+        pass
 
     info["image"]["zimage_turbo"] = (
         "z_image_turbo_bf16.safetensors" in unet_names
         and "qwen_3_4b.safetensors" in clip_names
         and "ae.safetensors" in vae_names
     )
-    info["image"]["flux1_schnell_fp8"] = FLUX_SCHNELL_FP8_CHECKPOINT in checkpoint_names
+    flux_gguf = (
+        FLUX_SCHNELL_GGUF_UNET in gguf_unet_names
+        and FLUX_SCHNELL_GGUF_T5 in gguf_clip_names
+        and FLUX_SCHNELL_CLIP_L in gguf_clip_names
+        and FLUX_SCHNELL_VAE in vae_names
+    )
+    flux_fp8 = FLUX_SCHNELL_FP8_CHECKPOINT in checkpoint_names
+    flux_backend = "gguf" if flux_gguf else ("fp8" if flux_fp8 else "")
+    info["image"]["flux1_schnell"] = bool(flux_backend)
+    # Kept for older frontends that only know the original capability key.
+    info["image"]["flux1_schnell_fp8"] = bool(flux_backend)
+    info["image"]["flux1_schnell_backend"] = flux_backend
     info["video"]["wan22_14b"] = (
         "wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors" in unet_names
         and "wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors" in unet_names
@@ -873,6 +983,40 @@ def build_flux_schnell_graph(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
     seed = clamp_int(data.get("seed"), random.randint(0, 2**32 - 1), 0, 2**63 - 1)
     steps = clamp_int(data.get("steps"), 4, 1, 20)
     batch_size = clamp_int(data.get("batch_size"), 1, 1, 4)
+    backend = str(data.get("backend") or "fp8").strip().lower()
+
+    if backend == "gguf":
+        return {
+            "1": {"class_type": "UnetLoaderGGUF",
+                  "inputs": {"unet_name": FLUX_SCHNELL_GGUF_UNET}},
+            "13": {"class_type": "ModelComputeDtype",
+                   "inputs": {"model": ["1", 0], "dtype": "fp32"}},
+            "2": {"class_type": "DualCLIPLoaderGGUF",
+                  "inputs": {"clip_name1": FLUX_SCHNELL_GGUF_T5,
+                             "clip_name2": FLUX_SCHNELL_CLIP_L, "type": "flux"}},
+            "3": {"class_type": "VAELoader",
+                  "inputs": {"vae_name": FLUX_SCHNELL_VAE}},
+            "4": {"class_type": "CLIPTextEncode",
+                  "inputs": {"clip": ["2", 0], "text": prompt}},
+            "5": {"class_type": "EmptySD3LatentImage",
+                  "inputs": {"width": width, "height": height, "batch_size": batch_size}},
+            "6": {"class_type": "RandomNoise", "inputs": {"noise_seed": seed}},
+            "7": {"class_type": "BasicGuider",
+                  "inputs": {"model": ["13", 0], "conditioning": ["4", 0]}},
+            "8": {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "euler"}},
+            "9": {"class_type": "BasicScheduler",
+                  "inputs": {"model": ["13", 0], "scheduler": "simple",
+                             "steps": steps, "denoise": 1.0}},
+            "10": {"class_type": "SamplerCustomAdvanced",
+                   "inputs": {"noise": ["6", 0], "guider": ["7", 0],
+                              "sampler": ["8", 0], "sigmas": ["9", 0],
+                              "latent_image": ["5", 0]}},
+            "11": {"class_type": "VAEDecode",
+                   "inputs": {"samples": ["10", 0], "vae": ["3", 0]}},
+            "12": {"class_type": "SaveImage",
+                   "inputs": {"images": ["11", 0],
+                              "filename_prefix": safe_prefix("imagineai_flux", prompt)}},
+        }
 
     return {
         "1": {"class_type": "CheckpointLoaderSimple",
@@ -1675,11 +1819,21 @@ def seedance_poll_result(task_id: str, key: str, on_progress=None,
     raise TimeoutError("Seedance video generation timed out.")
 
 
+def seedance_max_seconds(model: str) -> int:
+    return (SEEDANCE25_MAX_SECONDS_PER_REQUEST
+            if (model or DEFAULT_SEEDANCE_VIDEO_MODEL).strip().lower() == "seedance-2-5"
+            else SEEDANCE_MAX_SECONDS_PER_REQUEST)
+
+
 def seedance_start_video_task(prompt: str, aspect: str, seconds: object, model: str, key: str,
                               return_last_frame: bool = False, generate_audio: bool = True,
                               seed: object = None) -> str:
-    duration = clamp_int(seconds, 5, 4, SEEDANCE_MAX_SECONDS_PER_REQUEST)
     model_id = model or DEFAULT_SEEDANCE_VIDEO_MODEL
+    duration = clamp_int(seconds, 5, 4, seedance_max_seconds(model_id))
+    is_seedance25 = model_id.strip().lower() == "seedance-2-5"
+    resolution = str(DEFAULT_SEEDANCE_RESOLUTION).strip().lower()
+    if is_seedance25 and resolution not in ("480p", "720p", "1080p"):
+        resolution = "720p"
     payload = {
         "model": model_id,
         "input": {
@@ -1687,14 +1841,16 @@ def seedance_start_video_task(prompt: str, aspect: str, seconds: object, model: 
             "generation_type": "text-to-video",
             "duration": duration,
             "aspect_ratio": seedance_aspect_ratio(aspect),
-            "resolution": DEFAULT_SEEDANCE_RESOLUTION,
+            "resolution": resolution,
             "generate_audio": bool(generate_audio),
             "watermark": False,
             "web_search": False,
             "return_last_frame": bool(return_last_frame),
-            "seed": clamp_int(seed, -1, -1, 2147483647),
         },
     }
+    # Seevio rejects this field for 2.5; 2.0 variants retain seed control.
+    if not is_seedance25:
+        payload["input"]["seed"] = clamp_int(seed, -1, -1, 4294967295)
     data = seedance_request_json("/v1/videos/generations", key, payload, method="POST", timeout=120)
     task_id = seedance_task_id(data)
     if not task_id:
@@ -1726,18 +1882,19 @@ def seedance_generate_video_clip(prompt: str, aspect: str, seconds: object, mode
     }
 
 
-def seedance_video_segment_lengths(seconds: object) -> list[int]:
+def seedance_video_segment_lengths(seconds: object, model: str = "") -> list[int]:
     duration = clamp_int(seconds, 5, 4, SEEDANCE_MAX_STITCHED_SECONDS)
-    if duration <= SEEDANCE_MAX_SECONDS_PER_REQUEST:
+    max_seconds = seedance_max_seconds(model)
+    if duration <= max_seconds:
         return [duration]
-    if duration <= SEEDANCE_MAX_SECONDS_PER_REQUEST + 4:
+    if duration <= max_seconds + 4:
         return [duration - 4, 4]
-    return [SEEDANCE_MAX_SECONDS_PER_REQUEST, duration - SEEDANCE_MAX_SECONDS_PER_REQUEST]
+    return [max_seconds, duration - max_seconds]
 
 
 def seedance_generate_video(prompt: str, aspect: str, seconds: object, model: str, key: str,
                             on_progress=None, seed: object = None) -> dict[str, Any]:
-    segment_lengths = seedance_video_segment_lengths(seconds)
+    segment_lengths = seedance_video_segment_lengths(seconds, model)
     if len(segment_lengths) == 1:
         return seedance_public_video_result(
             seedance_generate_video_clip(prompt, aspect, segment_lengths[0], model, key, on_progress, seed=seed)
@@ -1801,6 +1958,36 @@ def seedance_generate_image(prompt: str, aspect: str, count: int, model: str, ke
         url, _, _ = download_url_to_output(last_frame, "seedance_image", ".png", timeout=600)
         urls.append(url)
     return urls
+
+
+def byteplus_generate_video(prompt: str, aspect: str, seconds: object, model: str, key: str,
+                            on_progress=None, start_image: str = "") -> dict[str, Any]:
+    """Generate directly with ModelArk, keeping its auth and payload separate from Seevio."""
+    first_frame = ""
+    if start_image:
+        mime, encoded, _ = image_data_url_for_provider(start_image)
+        first_frame = f"data:{mime};base64,{encoded}"
+    model_id = model or DEFAULT_BYTEPLUS_VIDEO_MODEL
+    try:
+        task_id = byteplus.start_task(
+            BYTEPLUS_BASE, key, prompt, seedance_aspect_ratio(aspect),
+            clamp_int(seconds, 5, 4, 30), model_id,
+            resolution=DEFAULT_BYTEPLUS_RESOLUTION, first_frame_url=first_frame,
+        )
+        data = byteplus.poll_result(
+            BYTEPLUS_BASE, key, task_id, on_progress=on_progress, timeout=SEEDANCE_VIDEO_TIMEOUT,
+        )
+    except (byteplus.BytePlusHTTPError, byteplus.BytePlusTaskError) as exc:
+        raise RuntimeError(byteplus.friendly_error(exc)) from exc
+    remote_url = str(data.get("video_url") or "")
+    if not valid_http_url(remote_url):
+        raise RuntimeError("BytePlus finished without a downloadable video URL.")
+    mp4_url, mp4_path, _ = download_url_to_output(remote_url, "byteplus_video", ".mp4", timeout=900)
+    webm_url = transcode_mp4_path_to_webm(mp4_path)
+    return {
+        "url": webm_url or mp4_url, "type": "video", "mp4Url": mp4_url,
+        "model": model_id, "byteplusTaskId": task_id, "seedanceService": "byteplus",
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -1938,6 +2125,9 @@ def atlas_generate_image(prompt: str, aspect: str, count: int, model: str, key: 
         sources = [s for s in source_image if isinstance(s, str) and s.strip()]
     else:
         sources = [source_image] if isinstance(source_image, str) and source_image.strip() else []
+    is_seedream5_pro = model_id.lower().startswith("bytedance/seedream-v5.0-pro/")
+    if is_seedream5_pro and len(sources) > 10:
+        raise ValueError("Seedream 5.0 Pro accepts at most 10 reference images.")
     image_urls: list[str] = []
     for index, src in enumerate(sources):
         if on_progress:
@@ -1951,6 +2141,10 @@ def atlas_generate_image(prompt: str, aspect: str, count: int, model: str, key: 
         }
         if image_urls:
             payload["images"] = image_urls
+        if is_seedream5_pro:
+            payload["size"] = ASPECT_TO_ATLAS_SEEDREAM5_SIZE.get(aspect, "2048*2048")
+            payload["output_format"] = "png"
+        elif image_urls:
             size = ASPECT_TO_ATLAS_EDIT_SIZE.get(aspect)
             if size:
                 payload["size"] = size
@@ -2064,11 +2258,11 @@ def atlas_video_model_id(model: str, has_start_image: bool) -> str:
         "kling": DEFAULT_ATLAS_I2V_MODEL if has_start_image else DEFAULT_ATLAS_VIDEO_MODEL,
         "kling-v2.0": DEFAULT_ATLAS_I2V_MODEL if has_start_image else DEFAULT_ATLAS_VIDEO_MODEL,
         "kling-v2": DEFAULT_ATLAS_I2V_MODEL if has_start_image else DEFAULT_ATLAS_VIDEO_MODEL,
-        "wan-2.7": DEFAULT_ATLAS_I2V_MODEL if has_start_image else DEFAULT_ATLAS_VIDEO_MODEL,
-        "wan2.7": DEFAULT_ATLAS_I2V_MODEL if has_start_image else DEFAULT_ATLAS_VIDEO_MODEL,
-        "wan 2.7": DEFAULT_ATLAS_I2V_MODEL if has_start_image else DEFAULT_ATLAS_VIDEO_MODEL,
-        "alibaba/wan-2.7": DEFAULT_ATLAS_I2V_MODEL if has_start_image else DEFAULT_ATLAS_VIDEO_MODEL,
     }
+    for version in ("2.7", "3.0", "3.0-prime"):
+        suffix = "image-to-video" if has_start_image else "text-to-video"
+        for alias in (f"wan-{version}", f"wan{version}", f"wan {version}", f"alibaba/wan-{version}"):
+            legacy_aliases[alias] = f"alibaba/wan-{version}/{suffix}"
     model_id = legacy_aliases.get(raw.lower(), raw)
     if has_start_image and model_id == DEFAULT_ATLAS_VIDEO_MODEL:
         return DEFAULT_ATLAS_I2V_MODEL
@@ -2104,6 +2298,21 @@ def atlas_is_wan27_model(model_id: str) -> bool:
     return "/wan-2.7/" in (model_id or "").lower()
 
 
+def atlas_is_wan30_model(model_id: str) -> bool:
+    return bool(re.search(r"/wan-3\.0(?:-prime)?/", (model_id or "").lower()))
+
+
+def atlas_wan30_resolution() -> str:
+    value = str(DEFAULT_ATLAS_WAN30_RESOLUTION or "1080p").strip().lower()
+    allowed = ("480p", "720p", "1080p", "720p-esr", "1080p-esr", "1440p-esr", "4k-esr")
+    return value if value in allowed else "1080p"
+
+
+def atlas_video_seed(model_id: str) -> int:
+    value = DEFAULT_ATLAS_WAN30_SEED if atlas_is_wan30_model(model_id) else DEFAULT_ATLAS_WAN27_SEED
+    return clamp_int(value, -1, -1, 2147483647)
+
+
 def atlas_public_video_result(result: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in result.items() if k != "mp4Path"}
 
@@ -2130,11 +2339,13 @@ def atlas_error_is_output_moderation(error: object) -> bool:
 
 
 def atlas_video_segment_lengths(seconds: object, model_id: str = "") -> list[int]:
-    if atlas_is_wan27_model(model_id):
+    if atlas_is_wan27_model(model_id) or atlas_is_wan30_model(model_id):
         remaining = clamp_int(seconds, 5, 2, ATLAS_MAX_STITCHED_SECONDS)
+        max_seconds = (ATLAS_WAN30_MAX_SECONDS_PER_REQUEST if atlas_is_wan30_model(model_id)
+                       else ATLAS_WAN27_MAX_SECONDS_PER_REQUEST)
         segments: list[int] = []
         while remaining > 0:
-            segment = min(ATLAS_WAN27_MAX_SECONDS_PER_REQUEST, remaining)
+            segment = min(max_seconds, remaining)
             if remaining - segment == 1:
                 segment -= 1
             segments.append(segment)
@@ -2164,11 +2375,20 @@ def atlas_generate_video_clip(prompt: str, aspect: str, seconds: object, model: 
         "prompt": prompt,
     }
     payload["duration"] = atlas_video_segment_lengths(seconds, model_id)[0]
-    clip_seed = clamp_int(seed, atlas_wan27_seed(), -1, 2147483647)
+    env_seed = atlas_video_seed(model_id)
+    clip_seed = clamp_int(seed, env_seed, -1, 2147483647)
     # A seed stays pinned when the caller asked for it (client-supplied or shared
     # across segments) or when the env default pins one.
-    pinned = (seed_pinned and clip_seed >= 0) or (seed is None and atlas_wan27_seed() >= 0)
-    if atlas_is_wan27_model(model_id):
+    pinned = (seed_pinned and clip_seed >= 0) or (seed is None and env_seed >= 0)
+    if atlas_is_wan30_model(model_id):
+        payload.update({
+            "resolution": atlas_wan30_resolution(),
+            "audio": DEFAULT_ATLAS_WAN30_AUDIO,
+            "seed": clip_seed,
+        })
+        if not has_start_image:
+            payload["ratio"] = ASPECT_TO_GEMINI.get(aspect, "16:9")
+    elif atlas_is_wan27_model(model_id):
         payload.update({
             "negative_prompt": (str(negative_prompt or "").strip() or atlas_wan27_negative_prompt())[:500],
             "resolution": atlas_wan27_resolution(),
@@ -2268,7 +2488,7 @@ def atlas_generate_video_with_model(prompt: str, aspect: str, seconds: object, m
     # One seed for every segment keeps grain, palette, and style consistent across
     # the whole clip; a client-supplied or env-pinned seed also stays pinned
     # through moderation retries.
-    env_seed = atlas_wan27_seed()
+    env_seed = atlas_video_seed(model_id)
     shared_seed = user_seed if seed_pinned else (
         env_seed if env_seed >= 0 else random.randint(0, 2147483647)
     )
@@ -2814,11 +3034,13 @@ def veo_request_json(path: str, key: str, payload: dict[str, Any] | None = None,
             pass
         raise VeoHTTPError(exc.code, detail or exc.reason) from exc
     except urllib.error.URLError as exc:
-        raise RuntimeError(f"Could not reach the Gemini API: {exc.reason}") from exc
+        if isinstance(exc.reason, TimeoutError) or "timed out" in str(exc.reason).lower():
+            raise TimeoutError("The Gemini API request timed out.") from exc
+        raise ConnectionError(f"Could not reach the Gemini API: {exc.reason}") from exc
 
 
 def veo_video_segment_lengths(seconds: object) -> list[int]:
-    """Veo renders 4, 6, or 8 s per request — split the target into those."""
+    """Use 4/6/8-second segments, supported by both legacy Veo and Omni."""
     total = clamp_int(seconds, 8, 4, VEO_MAX_STITCHED_SECONDS)
     total -= total % 2  # {4,6,8} sums can only hit even totals
     segments: list[int] = []
@@ -2842,12 +3064,25 @@ def veo_inline_image(data_url: object) -> dict[str, Any]:
 
 
 def veo_download_video(uri: str, key: str) -> tuple[str, Path]:
-    # The docs authenticate the download with the header; urllib can drop custom
-    # headers across redirects, so also append the key as a query parameter.
-    url = uri + ("&" if "?" in uri else "?") + urllib.parse.urlencode({"key": key})
+    # Authenticate via the documented header so URLs and HTTP errors never
+    # contain the API key. Signed cross-host redirects need no Google API key.
+    parsed = urllib.parse.urlsplit(uri)
+    query = [(name, value) for name, value in urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+             if name.lower() != "key"]
+    url = urllib.parse.urlunsplit(parsed._replace(query=urllib.parse.urlencode(query)))
+
+    class GoogleVideoRedirectHandler(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+            destination = urllib.parse.urlsplit(newurl)
+            origin = urllib.parse.urlsplit(req.full_url)
+            if redirected is not None and (destination.scheme, destination.netloc) != (origin.scheme, origin.netloc):
+                redirected.remove_header("X-goog-api-key")
+            return redirected
+
     req = urllib.request.Request(url)
     req.add_header("x-goog-api-key", key)
-    with urllib.request.urlopen(req, timeout=600) as response:
+    with urllib.request.build_opener(GoogleVideoRedirectHandler()).open(req, timeout=600) as response:
         data = response.read()
     if not data:
         raise RuntimeError("Veo returned an empty video file.")
@@ -2862,10 +3097,129 @@ def veo_public_video_result(result: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in result.items() if k != "mp4Path"}
 
 
+def omni_video_output(interaction: dict[str, Any]) -> dict[str, Any]:
+    """Read the raw Interactions REST response, excluding thought media."""
+    direct = interaction.get("output_video")
+    if isinstance(direct, dict) and (direct.get("data") or direct.get("uri")):
+        return direct
+    for step in reversed(interaction.get("steps") or []):
+        if not isinstance(step, dict) or step.get("type") != "model_output":
+            continue
+        for content in step.get("content") or []:
+            if isinstance(content, dict) and content.get("type") == "video":
+                return content
+    return {}
+
+
+def omni_download_video(uri: str, key: str, deadline: float, on_progress=None) -> tuple[str, Path]:
+    """URI delivery returns a Files resource that may still be processing."""
+    parsed = urllib.parse.urlsplit(uri)
+    match = re.search(r"(?:^|/)files/([A-Za-z0-9_-]+)(?::download)?$", parsed.path)
+    if not match:
+        raise RuntimeError("Gemini Omni returned an unrecognized video file URI.")
+    file_path = f"files/{match.group(1)}"
+    failures = 0
+    while now() < deadline:
+        try:
+            info = veo_request_json(file_path, key)
+            failures = 0
+        except VeoHTTPError as exc:
+            failures += 1
+            if exc.code not in (429, 500, 502, 503, 504) or failures > 5:
+                raise
+            time.sleep(5)
+            continue
+        state = str(info.get("state") or "").upper()
+        if state == "ACTIVE":
+            # Construct the download on our configured Google endpoint; never
+            # forward the API key to a host supplied in a model response.
+            download_uri = f"{GEMINI_API_BASE}/{file_path}:download?alt=media"
+            return veo_download_video(download_uri, key)
+        if state == "FAILED":
+            error = info.get("error") or {}
+            message = error.get("message") if isinstance(error, dict) else str(error)
+            raise RuntimeError(f"Gemini Omni video processing failed: {message or 'unknown error'}")
+        if on_progress:
+            on_progress("processing video")
+        time.sleep(5)
+    raise TimeoutError("Gemini Omni video processing timed out.")
+
+
+def omni_generate_video_clip(prompt: str, aspect: str, duration: int, model: str, key: str,
+                             start_image: object = "", on_progress=None,
+                             negative_prompt: str = "") -> dict[str, Any]:
+    """Gemini Omni uses Interactions, not Veo's predictLongRunning endpoint.
+
+    API: https://ai.google.dev/gemini-api/docs/omni
+    Format: https://ai.google.dev/api/interactions-api#responseformat
+    """
+    duration = clamp_int(duration, 8, 3, 10)
+    text_prompt = prompt
+    if str(negative_prompt or "").strip():
+        # Omni has no negative_prompt parameter; exclusions belong in the prompt.
+        text_prompt += f"\n\nAvoid the following: {str(negative_prompt).strip()[:500]}"
+    inputs: list[dict[str, Any]] = []
+    if isinstance(start_image, str) and start_image.strip():
+        mime, b64, raw = image_data_url_for_provider(start_image)
+        if len(raw) > 20 * 1024 * 1024:
+            raise ValueError("Gemini Omni needs an uploaded image under 20 MB.")
+        inputs.append({"type": "image", "mime_type": mime, "data": b64})
+        text_prompt = f"<FIRST_FRAME> {text_prompt}"
+    inputs.append({"type": "text", "text": text_prompt})
+    resolution = str(DEFAULT_VEO_RESOLUTION or "720p").strip().lower()
+    if resolution not in ("360p", "720p", "1080p", "4k"):
+        raise ValueError("Gemini Omni resolution must be 360p, 720p, 1080p, or 4k.")
+    payload = {
+        "model": model,
+        "input": inputs,
+        "response_format": {
+            "type": "video", "delivery": "uri",
+            "aspect_ratio": "9:16" if aspect in ("tall", "portrait") else "16:9",
+            "duration": f"{duration}s", "resolution": resolution,
+        },
+        "background": False, "store": False, "stream": False,
+    }
+    if on_progress:
+        on_progress("rendering with Gemini Omni")
+    deadline = now() + VEO_VIDEO_TIMEOUT
+    interaction = veo_request_json("interactions", key, payload, method="POST", timeout=VEO_VIDEO_TIMEOUT)
+    status = str(interaction.get("status") or "").lower()
+    if status in ("in_progress", "queued", "running"):
+        # A synchronous request should return completed output. Do not retry an
+        # accepted generation if the provider unexpectedly returns it unfinished.
+        interaction_id = str(interaction.get("id") or "unknown")
+        raise TimeoutError(f"Gemini Omni generation is still {status} (interaction {interaction_id}).")
+    if status in ("failed", "cancelled", "canceled") or interaction.get("error"):
+        error = interaction.get("error") or {}
+        message = error.get("message") if isinstance(error, dict) else str(error)
+        raise RuntimeError(f"Gemini Omni video failed: {message or status}")
+    video = omni_video_output(interaction)
+    if video.get("data"):
+        try:
+            raw = base64.b64decode(video["data"], validate=True)
+        except (ValueError, TypeError, binascii.Error) as exc:
+            raise RuntimeError("Gemini Omni returned invalid video data.") from exc
+        if not raw:
+            raise RuntimeError("Gemini Omni returned an empty video file.")
+        mp4_url, mp4_path, _ = save_output_bytes("omni_video", raw, ".mp4")
+    elif video.get("uri"):
+        mp4_url, mp4_path = omni_download_video(str(video["uri"]), key, deadline, on_progress)
+    else:
+        raise RuntimeError("Gemini Omni returned no video. Try rewording the prompt.")
+    webm_url = transcode_mp4_path_to_webm(mp4_path)
+    return {"url": webm_url or mp4_url, "type": "video", "mp4Url": mp4_url,
+            "mp4Path": str(mp4_path), "model": str(interaction.get("model") or model)}
+
+
 def veo_generate_video_clip(prompt: str, aspect: str, duration: int, model: str, key: str,
                             start_image: object = "", on_progress=None,
                             negative_prompt: str = "", seed: object = None) -> dict[str, Any]:
     model_id = (model or DEFAULT_VEO_VIDEO_MODEL).strip()
+    if model_id.startswith("gemini-omni-"):
+        # Omni has no seed control. Preserve the legacy argument for callers
+        # using an explicit Veo model with the legacy API below.
+        return omni_generate_video_clip(prompt, aspect, duration, model_id, key,
+                                        start_image, on_progress, negative_prompt)
     instance: dict[str, Any] = {"prompt": prompt}
     if isinstance(start_image, str) and start_image.strip():
         instance["image"] = veo_inline_image(start_image)
@@ -3018,8 +3372,14 @@ def veo_generate_video(prompt: str, aspect: str, seconds: object, model: str, ke
 
 # --------------------------------------------------------------------------- #
 # Sora (OpenAI Videos API) video generation
-# NOTE: OpenAI has deprecated this API — announced shutdown September 24, 2026.
+# Retired September 24, 2026. Helpers remain for legacy tests/history tooling;
+# public job submission rejects Sora before any cloud call is made.
 # --------------------------------------------------------------------------- #
+def is_retired_sora_model(model: object) -> bool:
+    value = str(model or "").strip().lower()
+    return value in ("sora", "sora2") or value == "sora-2" or value.startswith("sora-2-")
+
+
 class SoraHTTPError(RuntimeError):
     def __init__(self, code: int, message: str):
         super().__init__(f"OpenAI/Sora HTTP {code}: {message}")
@@ -3618,10 +3978,11 @@ def director_generate_video(job_id: str, payload: dict[str, Any], prompt: str, a
         on_progress("planning scenes")
     scenes = director_plan_scenes(prompt, estimated_scenes, total, gemini_key())
     base_tier = director_scene_tier(prompt)
-    # A non-Wan-2.7 Atlas model caps segments at 10 s (and its own rounding).
+    # Wan 2.7/3.0 support the Director's 15 s scene target; older Atlas
+    # models need their shorter cap.
     caps = dict(DIRECTOR_SEGMENT_SWEET_SPOT)
-    if "atlas" in available and not atlas_is_wan27_model(
-            atlas_video_model_id(str(settings.get("atlasVideoModel") or DEFAULT_ATLAS_VIDEO_MODEL), False)):
+    atlas_model = atlas_video_model_id(str(settings.get("atlasVideoModel") or DEFAULT_ATLAS_VIDEO_MODEL), False)
+    if "atlas" in available and not (atlas_is_wan27_model(atlas_model) or atlas_is_wan30_model(atlas_model)):
         caps["atlas"] = 10
 
     chain_hint = (" The provided start image is the exact final frame of the previous "
@@ -3849,21 +4210,21 @@ def run_image_job(job_id: str, payload: dict[str, Any]) -> None:
                         or DEFAULT_SEEDANCE_VIDEO_MODEL)
             key, provider = seedance_key()
             update_job(job_id, status="running",
-                       meta={"engine": "seedance", "modelTitle": "Seedance 2.0 Still",
+                       meta={"engine": "seedance", "modelTitle": "Seedance Still",
                              "model": model, "provider": provider})
             if not key:
                 raise RuntimeError("No Seedance API key saved. Add one in Settings as seedance.")
 
             def on_seedance_progress(status: str, progress: object) -> None:
                 update_job(job_id, status="running",
-                           meta={"engine": "seedance", "modelTitle": "Seedance 2.0 Still",
+                           meta={"engine": "seedance", "modelTitle": "Seedance Still",
                                  "model": model, "seedanceStatus": status, "progress": progress,
                                  "provider": provider})
 
             urls = seedance_generate_image(prompt, aspect, count, model, key, on_progress=on_seedance_progress)
             update_job(job_id, status="done",
                        results=[{"url": u, "type": "image"} for u in urls],
-                       meta={"engine": "seedance", "modelTitle": "Seedance 2.0 Still",
+                       meta={"engine": "seedance", "modelTitle": "Seedance Still",
                              "model": model, "provider": provider})
             return
 
@@ -3935,14 +4296,22 @@ def run_image_job(job_id: str, payload: dict[str, Any]) -> None:
         if engine in ("flux", "flux1", "flux.1", "flux1-schnell", "flux1_schnell_fp8"):
             if isinstance(source_image, str) and source_image.strip():
                 raise RuntimeError("FLUX.1 Schnell is text-to-image here. Use Z-Image, Gemini, Grok Imagine, or Atlas for reference-image edits.")
-            width, height = ASPECT_TO_SIZE.get(aspect, (1024, 1024))
+            flux_models = detect_models().get("image", {})
+            backend = str(flux_models.get("flux1_schnell_backend") or "")
+            if backend not in ("gguf", "fp8"):
+                raise RuntimeError("FLUX.1 Schnell is not available in ComfyUI.")
+            sizes = FLUX_GGUF_ASPECT_TO_SIZE if backend == "gguf" else ASPECT_TO_SIZE
+            width, height = sizes.get(aspect, sizes["square"])
+            model_title = f"{FLUX_SCHNELL_TITLE} {'Q4' if backend == 'gguf' else 'FP8'}"
             graph = build_flux_schnell_graph({
                 "prompt": prompt,
                 "width": width, "height": height, "batch_size": count,
                 "steps": payload.get("steps", 4),
                 "seed": payload.get("seed"),
+                "backend": backend,
             })
-            update_job(job_id, status="running", meta={"engine": "flux", "modelTitle": FLUX_SCHNELL_TITLE})
+            update_job(job_id, status="running",
+                       meta={"engine": "flux", "modelTitle": model_title, "backend": backend})
             with COMFY_LOCK:
                 comfy_free_memory()
                 prompt_id = queue_comfy_prompt(graph, "imagineai-flux")
@@ -3956,7 +4325,7 @@ def run_image_job(job_id: str, payload: dict[str, Any]) -> None:
                 raise RuntimeError("ComfyUI returned no image.")
             update_job(job_id, status="done",
                        results=[{"url": entry_to_media_url(e), "type": "image"} for e in entries],
-                       meta={"engine": "flux", "modelTitle": FLUX_SCHNELL_TITLE})
+                       meta={"engine": "flux", "modelTitle": model_title, "backend": backend})
             return
 
         # local Z-Image Turbo
@@ -4001,6 +4370,8 @@ def run_video_job(job_id: str, payload: dict[str, Any]) -> None:
     base_w, base_h = ASPECT_TO_SIZE.get(aspect, (1280, 720))
     settings = load_settings()
     try:
+        if is_retired_sora_model(model):
+            raise RuntimeError(SORA_RETIREMENT_MESSAGE)
         raw_start_images = payload.get("startImages")
         start_images = ([s for s in raw_start_images if isinstance(s, str) and s.strip()]
                         if isinstance(raw_start_images, list) else [])
@@ -4055,34 +4426,48 @@ def run_video_job(job_id: str, payload: dict[str, Any]) -> None:
             raise RuntimeError("Stability image keys are available for images only here; use ModelsLab, xAI, or local Wan for video.")
 
         if model in ("seedance", "seedance2", "seedance-2", "seedance2-ai"):
-            if isinstance(payload.get("startImage"), str) and payload.get("startImage").strip():
-                raise RuntimeError("Seedance start images are not wired here yet because the public API needs publicly reachable image URLs.")
-            seedance_model = str(payload.get("seedanceVideoModel") or settings.get("seedanceVideoModel")
-                                 or DEFAULT_SEEDANCE_VIDEO_MODEL)
-            key, provider = seedance_key()
+            service = seedance_service(settings)
+            is_byteplus = service == "byteplus"
+            start_image = str(payload.get("startImage") or "").strip()
+            if start_image and not is_byteplus:
+                raise RuntimeError("Seevio start images need public image URLs. Choose BytePlus in Settings to use an uploaded start image.")
+            seedance_model = str(
+                payload.get("byteplusVideoModel") or settings.get("byteplusVideoModel") or DEFAULT_BYTEPLUS_VIDEO_MODEL
+                if is_byteplus else
+                payload.get("seedanceVideoModel") or settings.get("seedanceVideoModel") or DEFAULT_SEEDANCE_VIDEO_MODEL
+            )
+            key, provider = byteplus_key() if is_byteplus else seedance_key()
+            model_title = f"Seedance · {'BytePlus' if is_byteplus else 'Seevio'}"
             update_job(job_id, status="running",
-                       meta={"engine": "seedance", "modelTitle": "Seedance 2.0 Video",
-                             "model": seedance_model, "provider": provider})
+                       meta={"engine": "seedance", "modelTitle": model_title,
+                             "model": seedance_model, "provider": provider, "seedanceService": service})
             if not key:
-                raise RuntimeError("No Seedance API key saved. Add one in Settings as seedance.")
+                if is_byteplus:
+                    raise RuntimeError("No BytePlus ModelArk API key saved. Add it in Settings → Seedance → BytePlus API key.")
+                raise RuntimeError("No Seevio API key saved. Add it in Settings as seevio or seedance, or select BytePlus for a ModelArk key.")
 
             def on_seedance_progress(status: str, progress: object) -> None:
                 update_job(job_id, status="running",
-                           meta={"engine": "seedance", "modelTitle": "Seedance 2.0 Video",
+                           meta={"engine": "seedance", "modelTitle": model_title,
                                  "model": seedance_model, "seedanceStatus": status, "progress": progress,
-                                 "provider": provider})
+                                 "provider": provider, "seedanceService": service})
 
-            result = seedance_generate_video(
-                prompt, aspect, payload.get("seconds"), seedance_model, key,
-                on_progress=on_seedance_progress,
-                seed=user_seed,
-            )
+            if is_byteplus:
+                result = byteplus_generate_video(
+                    prompt, aspect, payload.get("seconds"), seedance_model, key,
+                    on_progress=on_seedance_progress, start_image=start_image,
+                )
+            else:
+                result = seedance_generate_video(
+                    prompt, aspect, payload.get("seconds"), seedance_model, key,
+                    on_progress=on_seedance_progress, seed=user_seed,
+                )
             result = apply_soundtrack(result, payload,
                                       on_progress=lambda s: on_seedance_progress(s, None))
             actual_seedance_model = str(result.get("model") or seedance_model)
             update_job(job_id, status="done", results=[result],
-                       meta={"engine": "seedance", "modelTitle": "Seedance 2.0 Video",
-                             "model": actual_seedance_model, "provider": provider})
+                       meta={"engine": "seedance", "modelTitle": model_title,
+                             "model": actual_seedance_model, "provider": provider, "seedanceService": service})
             return
 
         if model in ("atlas", "atlascloud", "atlas-cloud"):
@@ -4118,9 +4503,10 @@ def run_video_job(job_id: str, payload: dict[str, Any]) -> None:
 
         if model in ("gemini", "veo", "veo3", "veo-3", "veo-3.1", "veo31", "gemini-veo"):
             selected_engine = "gemini" if model == "gemini" else "veo"
-            selected_title = "Gemini Video" if model == "gemini" else "Veo"
             veo_model = str(payload.get("veoVideoModel") or settings.get("veoVideoModel")
-                            or DEFAULT_VEO_VIDEO_MODEL)
+                             or DEFAULT_VEO_VIDEO_MODEL)
+            selected_title = ("Gemini Video" if model == "gemini" else
+                              ("Gemini Omni" if veo_model.startswith("gemini-omni-") else "Veo"))
             update_job(job_id, status="running",
                        meta={"engine": selected_engine, "modelTitle": selected_title, "model": veo_model})
             key = gemini_key()
@@ -4163,33 +4549,6 @@ def run_video_job(job_id: str, payload: dict[str, Any]) -> None:
             update_job(job_id, status="done", results=[result],
                        meta={"engine": "director", "modelTitle": "Director", "model": "director",
                              "scenes": result.get("scenes")})
-            return
-
-        if model in ("sora", "sora-2", "sora2", "sora-2-pro"):
-            sora_model = str(payload.get("soraVideoModel") or settings.get("soraVideoModel")
-                             or DEFAULT_SORA_VIDEO_MODEL)
-            key, provider = sora_key()
-            update_job(job_id, status="running",
-                       meta={"engine": "sora", "modelTitle": "Sora (OpenAI)", "model": sora_model,
-                             "provider": provider})
-            if not key:
-                raise RuntimeError("No OpenAI API key saved. Add one in Settings as sora or openai.")
-
-            def on_sora_progress(status: str, progress: object = None) -> None:
-                update_job(job_id, status="running",
-                           meta={"engine": "sora", "modelTitle": "Sora (OpenAI)",
-                                 "model": sora_model, "soraStatus": status, "progress": progress,
-                                 "provider": provider})
-
-            result = sora_generate_video(
-                prompt, aspect, payload.get("seconds"), sora_model, key,
-                on_progress=on_sora_progress,
-            )
-            result = apply_soundtrack(result, payload,
-                                      on_progress=lambda s: on_sora_progress(s, None))
-            update_job(job_id, status="done", results=[result],
-                       meta={"engine": "sora", "modelTitle": "Sora (OpenAI)",
-                             "model": str(result.get("model") or sora_model), "provider": provider})
             return
 
         if model == "xai":
@@ -5566,6 +5925,8 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/generate/video":
                 if not str(data.get("prompt") or "").strip():
                     return self._json(400, {"error": "Prompt is required."})
+                if is_retired_sora_model(data.get("model")):
+                    return self._json(410, {"error": SORA_RETIREMENT_MESSAGE})
                 return self._json(200, {"jobId": start_job("video", data)})
             if path == "/api/gpu/free":
                 try:
@@ -5584,6 +5945,10 @@ class Handler(BaseHTTPRequestHandler):
         stability_value, stability_provider = stability_key()
         modelslab_value, modelslab_provider = modelslab_key()
         seedance_value, seedance_provider = seedance_key()
+        byteplus_value, byteplus_provider = byteplus_key()
+        service = seedance_service(settings)
+        video_key, video_provider = ((byteplus_value, byteplus_provider) if service == "byteplus"
+                                     else (seedance_value, seedance_provider))
         sora_value, sora_provider = sora_key()
         elevenlabs_value, elevenlabs_provider = elevenlabs_key()
         return {
@@ -5608,11 +5973,17 @@ class Handler(BaseHTTPRequestHandler):
             "modelslabProvider": modelslab_provider if modelslab_value else "",
             "modelslabImageModel": settings["modelslabImageModel"],
             "modelslabVideoModel": settings["modelslabVideoModel"],
-            "seedanceConfigured": bool(seedance_value),
-            "seedanceProvider": seedance_provider if seedance_value else "",
+            "seedanceService": service,
+            "seedanceConfigured": bool(video_key),
+            "seedanceProvider": video_provider if video_key else "",
+            "seevioConfigured": bool(seedance_value),
+            "byteplusConfigured": bool(byteplus_value),
+            "byteplusVideoModel": settings["byteplusVideoModel"],
             "seedanceVideoModel": settings["seedanceVideoModel"],
             "veoVideoModel": settings["veoVideoModel"],
             "soraConfigured": bool(sora_value),
+            "soraAvailable": False,
+            "soraRetired": True,
             "soraProvider": sora_provider if sora_value else "",
             "soraVideoModel": settings["soraVideoModel"],
             "elevenlabsConfigured": bool(elevenlabs_value),
@@ -5626,6 +5997,8 @@ class Handler(BaseHTTPRequestHandler):
         custom = []
         for provider in KNOWN_SECRET_PROVIDERS:
             env_value = os.environ.get(SECRET_ENV_KEYS[provider], "")
+            if provider == "byteplus" and not env_value:
+                env_value = os.environ.get("ARK_API_KEY", "")
             if secrets.get(provider):
                 out[provider] = secret_status(secrets[provider], "file")
             else:

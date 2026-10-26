@@ -1,10 +1,21 @@
 import { getState, setState } from '../state.js';
 import { VIDEO_MODELS } from '../services/video-gen.js';
+import { kimiModelButton, kimiModelNote, handleKimiModelClick } from './kimi-model-option.js';
 import {
   LOCAL_VIDEO_MODELS,
   MODELSLAB_VIDEO_MODELS,
   STABLE_DIFFUSION_VIDEO_MODELS,
+  SORA_RETIREMENT_MESSAGE,
+  isAtlasWan3VideoModel,
+  isGeminiOmniVideoModel,
   isVideoModelAvailable,
+  seedanceProviderLabel,
+  seedanceService,
+  seedanceVideoTitle,
+  supportsVideoStartImage,
+  videoAspectForModel,
+  videoDurationLimits,
+  videoSecondsForModel,
 } from '../services/video-model-routing.js';
 
 const SUGGESTIONS = [
@@ -36,22 +47,17 @@ function chip(label, value, group, active, disabled = false) {
 
 // Which engines actually consume the Advanced fields; the others ignore them
 // server-side, so the UI must not promise what the engine drops.
-export function supportsNegativePrompt(model) {
+export function supportsNegativePrompt(model, config = getState().config) {
+  if (isAtlasWan3VideoModel(model, config)) return false;
   return ['atlas', 'gemini', 'veo', 'director'].includes(model)
     || MODELSLAB_VIDEO_MODELS.includes(model) || LOCAL_VIDEO_MODELS.includes(model);
 }
-export function supportsSeed(model) {
+export function supportsSeed(model, config = getState().config) {
+  if (isGeminiOmniVideoModel(model, config)) return false;
+  if (model === 'seedance' && seedanceService(config) === 'byteplus') return false;
+  if (model === 'seedance' && (config.seedanceVideoModel || 'seedance-2-5').startsWith('seedance-2-5')) return false;
   return ['atlas', 'gemini', 'veo', 'seedance', 'director'].includes(model)
     || MODELSLAB_VIDEO_MODELS.includes(model) || LOCAL_VIDEO_MODELS.includes(model);
-}
-
-function maxSecondsForModel(model) {
-  if (model === 'director') return 180;   // long film: scenes across engines, chained + crossfaded
-  if (['atlas', 'xai', 'gemini', 'veo', 'sora'].includes(model)) return 60;   // segments, chained + crossfaded locally (Sora extends natively)
-  if (model === 'seedance') return 30;
-  if (MODELSLAB_VIDEO_MODELS.includes(model)) return 120;   // cloud, stitched — no local VRAM used
-  if (LOCAL_VIDEO_MODELS.includes(model)) return 120;   // rendered in ~10s blocks, stitched together
-  return 5;
 }
 
 export function init() {
@@ -80,7 +86,6 @@ export function render() {
   const atlasOk = modelAvailable('atlas');
   const geminiOk = modelAvailable('gemini');
   const veoOk = modelAvailable('veo');
-  const soraOk = modelAvailable('sora');
   const directorOk = modelAvailable('director');
   const seedanceOk = modelAvailable('seedance');
   const stableDiffusionOk = modelAvailable('stable-diffusion-api');
@@ -88,8 +93,9 @@ export function render() {
   const startImages = s._draftVideoStartImages || [];
   const mergeOn = !!s._draftVideoMergeStartImages;
   const imageError = s._draftVideoStartImageError || '';
-  const maxSeconds = maxSecondsForModel(s.videoModel);
-  const selectedSeconds = Math.min(s.videoSeconds, maxSeconds);
+  const durationLimits = videoDurationLimits(s.videoModel);
+  const selectedAspect = videoAspectForModel(s.videoModel, s.videoAspect, s.config);
+  const selectedSeconds = videoSecondsForModel(s.videoModel, s.videoSeconds);
   const negOk = supportsNegativePrompt(s.videoModel);
   const seedOk = supportsSeed(s.videoModel);
   const soundtrackOk = !!s.config.elevenlabsConfigured;
@@ -115,11 +121,12 @@ export function render() {
         <div id="modelChips" class="flex flex-wrap gap-1.5">
           ${chip(`𝕏 ${VIDEO_MODELS.xai.title}`, 'xai', 'model', s.videoModel === 'xai', !xaiOk)}
           ${chip(`◆ ${VIDEO_MODELS.atlas.title}`, 'atlas', 'model', s.videoModel === 'atlas', !atlasOk)}
+          ${kimiModelButton('video')}
           ${chip(`✦ ${VIDEO_MODELS.gemini.title}`, 'gemini', 'model', s.videoModel === 'gemini', !geminiOk)}
           ${chip(`▲ ${VIDEO_MODELS.veo.title}`, 'veo', 'model', s.videoModel === 'veo', !veoOk)}
-          ${chip(`● ${VIDEO_MODELS.sora.title}`, 'sora', 'model', s.videoModel === 'sora', !soraOk)}
+          ${chip(`● ${VIDEO_MODELS.sora.title} · retired`, 'sora', 'model', false, true)}
           ${chip(`🎭 ${VIDEO_MODELS.director.title}`, 'director', 'model', s.videoModel === 'director', !directorOk)}
-          ${chip(`◈ ${VIDEO_MODELS.seedance.title}`, 'seedance', 'model', s.videoModel === 'seedance', !seedanceOk)}
+          ${chip(`◈ ${escapeHtml(seedanceVideoTitle(s.config))}`, 'seedance', 'model', s.videoModel === 'seedance', !seedanceOk)}
           ${chip(`▣ ${VIDEO_MODELS['stable-diffusion-api'].title}`, 'stable-diffusion-api', 'model', isStableDiffusionVideo(s.videoModel), !stableDiffusionOk)}
           ${showModelslab ? chip(`▣ ${VIDEO_MODELS['wan2.6-t2v'].title}`, 'wan2.6-t2v', 'model', s.videoModel === 'wan2.6-t2v', !modelAvailable('wan2.6-t2v')) : ''}
           ${chip(`🎬 ${VIDEO_MODELS.wanvideo_5b.title}`, 'wanvideo_5b', 'model', s.videoModel === 'wanvideo_5b', !wanVideoOk)}
@@ -128,6 +135,8 @@ export function render() {
           ${chip(`🪶 ${VIDEO_MODELS.wan21_1_3b.title}`, 'wan21_1_3b', 'model', s.videoModel === 'wan21_1_3b', !wan21Ok)}
         </div>
         <p class="text-[10px] text-slate-600">${escapeHtml(VIDEO_MODELS[s.videoModel]?.note || '')}</p>
+        <p class="text-[10px] text-slate-500">${escapeHtml(SORA_RETIREMENT_MESSAGE)}</p>
+        ${kimiModelNote('video')}
       </div>
 
       <div class="space-y-2 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
@@ -166,12 +175,12 @@ export function render() {
         <div class="space-y-1.5">
           <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Ratio</label>
           <div id="vratioChips" class="flex gap-1.5">
-            ${RATIOS.map((r) => chip(r.label, r.key, 'vratio', s.videoAspect === r.key)).join('')}
+            ${RATIOS.map((r) => chip(r.label, r.key, 'vratio', selectedAspect === r.key, videoAspectForModel(s.videoModel, r.key, s.config) !== r.key)).join('')}
           </div>
         </div>
         <div class="space-y-1.5 flex-1 min-w-[160px]">
           <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Length: <span id="secOut" class="text-violet-300">${selectedSeconds}s</span></label>
-          <input id="secRange" type="range" min="1" max="${maxSeconds}" step="1" value="${selectedSeconds}" class="range-violet w-full">
+          <input id="secRange" type="range" min="${durationLimits.min}" max="${durationLimits.max}" step="${durationLimits.step}" value="${selectedSeconds}" class="range-violet w-full">
         </div>
       </div>
 
@@ -186,6 +195,7 @@ export function render() {
               class="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30 resize-none"
               placeholder="What to avoid… e.g. blurry, watermark, text, deformed hands">${escapeHtml(s.videoNegativePrompt || '')}</textarea>
             ${negOk ? '' : `<p class="text-[10px] text-slate-600">${escapeHtml(VIDEO_MODELS[s.videoModel]?.title || s.videoModel)} does not support a negative prompt.</p>`}
+            ${isGeminiOmniVideoModel(s.videoModel, s.config) ? '<p class="text-[10px] text-slate-600">Included in the prompt as things to avoid.</p>' : ''}
           </div>
           <div class="space-y-1.5${seedOk ? '' : ' opacity-50'}">
             <label for="videoSeedInput" class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Seed</label>
@@ -211,7 +221,7 @@ export function render() {
         <span id="videoBtnIcon">🎬</span><span id="videoBtnText">Create Video</span>
       </button>
 
-      <p class="text-center text-[11px] text-slate-600">${videoHint(s, wanVideoOk || wan22Ok || wanTi2vOk || wan21Ok || xaiOk || atlasOk || geminiOk || veoOk || soraOk || directorOk || seedanceOk || stableDiffusionOk)}</p>
+      <p class="text-center text-[11px] text-slate-600">${videoHint(s, wanVideoOk || wan22Ok || wanTi2vOk || wan21Ok || xaiOk || atlasOk || geminiOk || veoOk || directorOk || seedanceOk || stableDiffusionOk)}</p>
     </div>
   `;
 
@@ -219,8 +229,10 @@ export function render() {
   startImageInput = document.getElementById('videoStartImageInput');
   const range = document.getElementById('secRange');
   range?.addEventListener('input', () => {
-    document.getElementById('secOut').textContent = `${range.value}s`;
-    setState({ videoSeconds: parseInt(range.value, 10) });
+    const seconds = videoSecondsForModel(getState().videoModel, range.value);
+    range.value = seconds;
+    document.getElementById('secOut').textContent = `${seconds}s`;
+    setState({ videoSeconds: seconds });
   });
   // Write-through to persisted state without re-rendering, so typing keeps focus.
   document.getElementById('videoNegativeInput')?.addEventListener('input', (e) => {
@@ -248,24 +260,31 @@ function videoHint(s, anyModel) {
   }
   if (s.videoModel === 'atlas') {
     if (!s.config.atlasConfigured) return 'Add an Atlas key in Settings as atlas to generate Atlas videos.';
-    return `Atlas Cloud video via ${escapeHtml(s.config.atlasVideoModel || 'alibaba/wan-2.7/text-to-video')} · 16-60s is stitched locally: each segment continues from the previous one's last frame and the seams are crossfaded.`;
+    const nativeMax = isAtlasWan3VideoModel('atlas', s.config) ? 30 : 15;
+    return `Atlas Cloud video via ${escapeHtml(s.config.atlasVideoModel || 'alibaba/wan-3.0/text-to-video')} · up to ${nativeMax}s per API call · ${nativeMax + 1}-60s is stitched locally: each segment continues from the previous one's last frame and the seams are crossfaded.`;
   }
   if (s.videoModel === 'gemini' || s.videoModel === 'veo') {
-    const selectedName = s.videoModel === 'gemini' ? 'Gemini' : 'Veo';
+    const selectedName = s.videoModel === 'gemini' ? 'Gemini' : 'Gemini Omni';
     if (!s.config.geminiConfigured) return `Add a Gemini key in Settings to generate ${selectedName} videos.`;
-    return `${selectedName} via ${escapeHtml(s.config.veoVideoModel || 'veo-3.1-generate-preview')} · native audio · 10-60s is stitched locally: segments chain from the previous last frame and crossfade at the seams.`;
+    return `${selectedName} via ${escapeHtml(s.config.veoVideoModel || 'gemini-omni-1.1-flash')} · native audio · longer clips up to 60s are stitched locally: segments chain from the previous last frame and crossfade at the seams.`;
   }
   if (s.videoModel === 'sora') {
-    if (!s.config.soraConfigured) return 'Add an OpenAI key in Settings as sora or openai to generate Sora videos.';
-    return `OpenAI Sora via ${escapeHtml(s.config.soraVideoModel || 'sora-2')} · audio included · longer clips use Sora's native extensions. Note: OpenAI retires this API on September 24, 2026.`;
+    return SORA_RETIREMENT_MESSAGE;
   }
   if (s.videoModel === 'director') {
-    if (!modelAvailable('director')) return 'Director needs at least one cloud engine key: Atlas, xAI (Grok), or Gemini (Veo).';
-    return 'Plans your idea as scenes (via Gemini when configured) and picks a cloud engine per scene by content — Atlas Wan 2.7 for the artistic scenes, Grok for the mildly edgy ones, Veo for the safe ones. Never uses local Wan: if every engine refuses a scene, the job stops and tells you, so you can render that part with the model of your choice. Scenes chain and crossfade (video + audio) into one film of up to 3 minutes.';
+    if (!modelAvailable('director')) return 'Director needs at least one cloud engine key: Atlas, xAI (Grok), or Gemini (Omni).';
+    return 'Plans your idea as scenes (via Gemini when configured) and picks a cloud engine per scene by content — Atlas Wan 3.0 for the artistic scenes, Grok for the mildly edgy ones, Gemini Omni for the safe ones. Never uses local Wan: if every engine refuses a scene, the job stops and tells you, so you can render that part with the model of your choice. Scenes chain and crossfade (video + audio) into one film of up to 3 minutes.';
   }
   if (s.videoModel === 'seedance') {
-    if (!s.config.seedanceConfigured) return 'Add a Seedance key in Settings as seedance to generate Seedance videos.';
-    return `Seedance 2.0 video via ${escapeHtml(s.config.seedanceVideoModel || 'seedance-2-0')} · 16-30s is stitched locally from multiple Seedance segments.`;
+    if (!s.config.seedanceConfigured) return `Add a ${seedanceProviderLabel(s.config)} key in Settings for the selected Seedance provider.`;
+    if (seedanceService(s.config) === 'byteplus') {
+      return `Seedance via BytePlus ModelArk ${escapeHtml(s.config.byteplusVideoModel || 'dreamina-seedance-2-5-260628')} · 4-30s in one native clip · uses your BytePlus quota. A start image determines the output aspect ratio.`;
+    }
+    const modelId = s.config.seedanceVideoModel || 'seedance-2-5';
+    const durationNote = modelId === 'seedance-2-5'
+      ? '4-30s in one native clip'
+      : '16-30s is stitched locally from multiple Seedance segments';
+    return `Seedance video via Seevio ${escapeHtml(modelId)} · ${durationNote} · uses your Seevio quota.`;
   }
   if (isStableDiffusionVideo(s.videoModel)) {
     if (!s.config.modelslabConfigured) return 'Add a ModelsLab or Stable Diffusion API key in Settings to generate Stable Diffusion videos.';
@@ -288,10 +307,18 @@ function videoHint(s, anyModel) {
 }
 
 function handleClick(e) {
+  if (handleKimiModelClick(e, 'video')) return;
   const c = e.target.closest('.vchip');
   if (c && !c.disabled) {
     const { group, value } = c.dataset;
-    if (group === 'model') setState({ videoModel: value, videoSeconds: Math.min(getState().videoSeconds, maxSecondsForModel(value)) });
+    if (group === 'model') {
+      const s = getState();
+      setState({
+        videoModel: value,
+        videoSeconds: videoSecondsForModel(value, s.videoSeconds),
+        videoAspect: videoAspectForModel(value, s.videoAspect, s.config),
+      });
+    }
     else if (group === 'vratio') setState({ videoAspect: value });
     rememberDraft();
     render();
@@ -331,7 +358,6 @@ function rememberDraft() {
 }
 
 const MAX_START_IMAGES = 8;
-const START_IMAGE_MODELS = ['wan22_ti2v_5b', 'wan22_14b', 'xai', 'atlas', 'gemini', 'veo', 'director'];
 
 async function handleStartImageChange() {
   const files = Array.from(startImageInput?.files || []);
@@ -349,10 +375,11 @@ async function handleStartImageChange() {
   s._draftVideoStartImageError = error;
   if (startImageInput) startImageInput.value = ''; // let the same file be picked again later
   // Point at a model that supports start images if the current one doesn't.
-  if (s._draftVideoStartImages.length && !START_IMAGE_MODELS.includes(s.videoModel)) {
+  if (s._draftVideoStartImages.length && !supportsVideoStartImage(s.videoModel, s.config)) {
     if (modelAvailable('wan22_ti2v_5b')) setState({ videoModel: 'wan22_ti2v_5b' });
     else if (modelAvailable('xai')) setState({ videoModel: 'xai' });
     else if (modelAvailable('atlas')) setState({ videoModel: 'atlas' });
+    else if (modelAvailable('seedance') && supportsVideoStartImage('seedance', s.config)) setState({ videoModel: 'seedance' });
   }
   render();
 }
@@ -367,8 +394,12 @@ function readFileAsDataURL(file) {
 }
 
 function startImagesLabel(images) {
+  const s = getState();
+  if (s.videoModel === 'seedance' && seedanceService(s.config) === 'byteplus') {
+    return 'BytePlus uses the first image as the start frame and follows its aspect ratio. Enable Merge to combine multiple images into one start frame.';
+  }
   if (!images.length) {
-    return 'Optional. Add one or more images. Grok mixes multiple images into one clip; local Wan 2.2 TI2V/14B travels through them as keyframes; Atlas, Gemini, and Veo use the first only.';
+    return 'Optional. Add one or more images. Grok mixes multiple images into one clip; local Wan 2.2 TI2V/14B travels through them as keyframes; Atlas, Gemini, and Gemini Omni use the first only.';
   }
   if (images.length === 1) return `1 start frame · ${formatBytes(images[0].size)}`;
   return `${images.length} images · Grok blends them; local Wan uses them as keyframes in order.`;

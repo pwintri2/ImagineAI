@@ -39,6 +39,7 @@
     ],
     "resources": [
       "../server.py",
+      "../byteplus.py",
       "../web"
     ],
     "linux": {

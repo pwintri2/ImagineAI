@@ -3,14 +3,22 @@ import {
   saveHistoryEntry, saveVideoHistoryEntry,
 } from './state.js';
 import { getConfig, cancelJob, getGpu, freeGpu } from './services/api.js';
-import { ENGINES, generateImage } from './services/image-gen.js';
+import { ENGINES, generateImage, isSeedanceStillAvailable } from './services/image-gen.js';
 import { generateVideo } from './services/video-gen.js';
 import { friendlyError } from './services/friendly-error.js';
 import {
   MODELSLAB_VIDEO_MODELS,
   STABLE_DIFFUSION_VIDEO_MODELS,
+  SORA_RETIREMENT_MESSAGE,
   isLocalVideoModel,
+  isVideoModelAvailable,
   reconcileVideoModel,
+  seedanceProviderLabel,
+  seedanceService,
+  seedanceVideoTitle,
+  supportsVideoStartImage,
+  videoAspectForModel,
+  videoSecondsForModel,
 } from './services/video-model-routing.js';
 import * as PromptView from './ui/prompt-view.js';
 import * as GalleryView from './ui/gallery-view.js';
@@ -101,6 +109,11 @@ async function handleFreeGpu() {
 let configInFlight = false;
 let lastAvailKey = '';
 
+function fluxImageAvailable(config) {
+  const image = config.models?.image;
+  return !!(config.comfyReachable && (image?.flux1_schnell || image?.flux1_schnell_fp8));
+}
+
 function availabilityKey(config) {
   return JSON.stringify({
     reach: !!config.comfyReachable,
@@ -112,7 +125,13 @@ function availabilityKey(config) {
     sdxl: !!(config.sdxlConfigured || config.stabilityConfigured),
     modelslab: !!config.modelslabConfigured,
     seedance: !!config.seedanceConfigured,
-    sora: !!config.soraConfigured,
+    seevio: isSeedanceStillAvailable(config),
+    seedanceService: seedanceService(config),
+    byteplusVideoModel: config.byteplusVideoModel,
+    sora: isVideoModelAvailable('sora', config),
+    googleVideoModel: config.veoVideoModel,
+    atlasVideoModel: config.atlasVideoModel,
+    seedanceVideoModel: config.seedanceVideoModel,
     eleven: !!config.elevenlabsConfigured,
   });
 }
@@ -156,12 +175,12 @@ function onConfigChange(config) {
 function reconcileEngine(config) {
   const s = getState();
   const localImg = !!(config.comfyReachable && config.models?.image?.zimage_turbo);
-  const fluxImg = !!(config.comfyReachable && config.models?.image?.flux1_schnell_fp8);
+  const fluxImg = fluxImageAvailable(config);
   const gemini = !!config.geminiConfigured;
   const xai = !!config.xaiConfigured;
   const atlas = !!config.atlasConfigured;
   const sdxl = !!(config.sdxlConfigured || config.stabilityConfigured);
-  const seedance = !!config.seedanceConfigured;
+  const seedance = isSeedanceStillAvailable(config);
   let engine = s.imageEngine;
   const localFallback = localImg ? 'local' : (fluxImg ? 'flux' : '');
   if (engine === 'local' && !localImg) engine = fluxImg ? 'flux' : (xai ? 'xai' : (atlas ? 'atlas' : (seedance ? 'seedance' : (sdxl ? 'sdxl' : (gemini ? 'gemini' : engine)))));
@@ -174,17 +193,22 @@ function reconcileEngine(config) {
   if (engine !== s.imageEngine) setState({ imageEngine: engine });
 
   const vModel = reconcileVideoModel(s.videoModel, config);
-  if (vModel !== s.videoModel) setState({ videoModel: vModel });
+  const vAspect = videoAspectForModel(vModel, s.videoAspect, config);
+  const vSeconds = vModel ? videoSecondsForModel(vModel, s.videoSeconds) : s.videoSeconds;
+  if (vModel !== s.videoModel || vAspect !== s.videoAspect || vSeconds !== s.videoSeconds) {
+    setState({ videoModel: vModel, videoAspect: vAspect, videoSeconds: vSeconds });
+  }
 }
 
 function updateStatus(config) {
   const localImg = !!(config.comfyReachable && config.models?.image?.zimage_turbo);
-  const fluxImg = !!(config.comfyReachable && config.models?.image?.flux1_schnell_fp8);
+  const fluxImg = fluxImageAvailable(config);
   if (localImg) setStatus(true, 'ComfyUI ready');
   else if (fluxImg) setStatus(true, 'FLUX ready');
   else if (config.xaiConfigured) setStatus(true, 'Grok ready');
   else if (config.atlasConfigured) setStatus(true, 'Atlas ready');
-  else if (config.seedanceConfigured) setStatus(true, 'Seedance ready');
+  else if (config.seedanceConfigured) setStatus(true, `${seedanceProviderLabel(config)} ready`);
+  else if (isSeedanceStillAvailable(config)) setStatus(true, 'Seevio stills ready');
   else if (config.modelslabConfigured) setStatus(true, 'ModelsLab ready');
   else if (config.sdxlConfigured || config.stabilityConfigured) setStatus(true, 'SDXL ready');
   else if (config.geminiConfigured) setStatus(true, 'Gemini ready');
@@ -209,13 +233,13 @@ async function handleGenerateImage() {
   if (s.isGenerating) return;
   const engine = s.imageEngine;
   const localImg = !!(s.config.comfyReachable && s.config.models?.image?.zimage_turbo);
-  const fluxImg = !!(s.config.comfyReachable && s.config.models?.image?.flux1_schnell_fp8);
+  const fluxImg = fluxImageAvailable(s.config);
   if (engine === 'local' && !localImg) { showToast('ComfyUI / Z-Image not available. Add a cloud key or start ComfyUI.', 'error'); return; }
-  if (engine === 'flux' && !fluxImg) { showToast('ComfyUI / FLUX.1 Schnell not available. Download the FP8 checkpoint or start ComfyUI.', 'error'); return; }
+  if (engine === 'flux' && !fluxImg) { showToast('ComfyUI / FLUX.1 Schnell not available. Install the Q4 or FP8 model, or start ComfyUI.', 'error'); return; }
   if (engine === 'gemini' && !s.config.geminiConfigured) { showToast('No Gemini key saved — open Settings to add one.', 'error'); return; }
   if (engine === 'xai' && !s.config.xaiConfigured) { showToast('No xAI key saved — open Settings to add one.', 'error'); return; }
   if (engine === 'atlas' && !s.config.atlasConfigured) { showToast('No Atlas key saved — open Settings to add one as atlas.', 'error'); return; }
-  if (engine === 'seedance' && !s.config.seedanceConfigured) { showToast('No Seedance key saved — open Settings to add one as seedance.', 'error'); return; }
+  if (engine === 'seedance' && !isSeedanceStillAvailable(s.config)) { showToast('Seedance Still needs a Seevio key — open Settings and add it under Other API keys as seedance.', 'error'); return; }
   if (engine === 'sdxl' && !(s.config.sdxlConfigured || s.config.stabilityConfigured)) { showToast('No ModelsLab/SDXL key saved — open Settings to add one.', 'error'); return; }
   const sourceImage = PromptView.getSourceImage();
   if (sourceImage && !['local', 'gemini', 'xai', 'atlas'].includes(engine)) {
@@ -266,38 +290,23 @@ async function handleGenerateVideo() {
   const s = getState();
   if (s.isGeneratingVideo) return;
   const model = s.videoModel;
-  const directorReady = !!(s.config.atlasConfigured || s.config.xaiConfigured || s.config.geminiConfigured);
-  const available = model === 'xai'
-    ? !!s.config.xaiConfigured
-    : model === 'atlas'
-      ? !!s.config.atlasConfigured
-    : model === 'gemini' || model === 'veo'
-      ? !!s.config.geminiConfigured
-    : model === 'sora'
-      ? !!s.config.soraConfigured
-    : model === 'director'
-      ? directorReady
-    : model === 'seedance'
-      ? !!s.config.seedanceConfigured
-    : MODELSLAB_VIDEO_MODELS.includes(model)
-      ? !!s.config.modelslabConfigured
-    : !!(s.config.comfyReachable && s.config.models?.video?.[model]);
+  const available = isVideoModelAvailable(model, s.config);
   if (!available) {
     showToast(model === 'xai'
       ? 'No xAI key saved — open Settings to add one.'
       : (model === 'atlas' ? 'No Atlas key saved — open Settings to add one as atlas.'
-        : (['gemini', 'veo'].includes(model) ? `No Gemini key saved — open Settings to add one to use ${model === 'gemini' ? 'Gemini' : 'Veo'}.`
-          : (model === 'sora' ? 'No OpenAI key saved — open Settings to add one as sora or openai.'
-            : (model === 'director' ? 'Director needs at least one cloud engine key: Atlas, xAI (Grok), or Gemini (Veo).'
-              : (model === 'seedance' ? 'No Seedance key saved — open Settings to add one as seedance.'
+        : (['gemini', 'veo'].includes(model) ? `No Gemini key saved — open Settings to add one to use ${model === 'gemini' ? 'Gemini' : 'Gemini Omni'}.`
+          : (model === 'sora' ? SORA_RETIREMENT_MESSAGE
+            : (model === 'director' ? 'Director needs at least one cloud engine key: Atlas, xAI (Grok), or Gemini (Omni).'
+              : (model === 'seedance' ? `No ${seedanceProviderLabel(s.config)} key saved — open Settings to add the key for your selected Seedance provider.`
                 : (MODELSLAB_VIDEO_MODELS.includes(model) ? 'No ModelsLab or Stable Diffusion API key saved — open Settings to add one.'
                   : 'That video model is not available in ComfyUI.')))))),
     'error');
     return;
   }
   const startImages = VideoPromptView.getStartImages();
-  if (startImages.length && !['wan22_ti2v_5b', 'wan22_14b', 'xai', 'atlas', 'gemini', 'veo', 'director'].includes(model)) {
-    showToast('Start images work with Wan 2.2 TI2V 5B / 14B, Grok Imagine, Atlas, Gemini, Veo, or Director. Select one of those first.', 'info');
+  if (startImages.length && !supportsVideoStartImage(model, s.config)) {
+    showToast('Start images work with Wan 2.2 TI2V 5B / 14B, Grok Imagine, Atlas, Gemini, Gemini Omni, Seedance via BytePlus, or Director. Select one of those first.', 'info');
     return;
   }
   const mergeStartImages = VideoPromptView.getMergeStartImages() && startImages.length > 1;
@@ -321,12 +330,12 @@ async function handleGenerateVideo() {
   const timeoutMs = Math.max(60 * 60 * 1000, seconds * 4 * 60 * 1000);
 
   try {
-    const progressBase = model === 'xai' ? 'Grok Imagine is rendering' : (model === 'atlas' ? 'Atlas is rendering' : (model === 'gemini' ? 'Gemini is rendering' : (model === 'veo' ? 'Veo is rendering' : (model === 'sora' ? 'Sora is rendering' : (model === 'director' ? 'Director is filming' : (model === 'seedance' ? 'Seedance is rendering' : (MODELSLAB_VIDEO_MODELS.includes(model) ? 'Stable Diffusion is rendering' : 'Wan is generating frames')))))));
+    const progressBase = model === 'xai' ? 'Grok Imagine is rendering' : (model === 'atlas' ? 'Atlas is rendering' : (model === 'gemini' ? 'Gemini is rendering' : (model === 'veo' ? 'Gemini Omni is rendering' : (model === 'sora' ? 'Sora is rendering' : (model === 'director' ? 'Director is filming' : (model === 'seedance' ? 'Seedance is rendering' : (MODELSLAB_VIDEO_MODELS.includes(model) ? 'Stable Diffusion is rendering' : 'Wan is generating frames')))))));
     const { results, modelTitle, status } = await generateVideo(
       {
         prompt,
         model,
-        aspect: s.videoAspect,
+        aspect: videoAspectForModel(model, s.videoAspect, s.config),
         seconds,
         startImage: startImages[0] || null,
         startImages,
@@ -383,25 +392,14 @@ function videoProgressLabel(job, started, base) {
   return progressLabel(job, started, base);
 }
 
-function videoSecondsForModel(model, seconds) {
-  const parsed = Number.parseInt(seconds, 10);
-  const value = Number.isFinite(parsed) ? parsed : 2;
-  const cloudLong = MODELSLAB_VIDEO_MODELS.includes(model);
-  const local = isLocalVideoModel(model);
-  const max = model === 'director' ? 180
-    : (['atlas', 'xai', 'gemini', 'veo', 'sora'].includes(model) ? 60
-      : (model === 'seedance' ? 30 : ((cloudLong || local) ? 120 : 5)));
-  return Math.max(1, Math.min(max, value));
-}
-
 function videoModelTitle(model) {
   if (model === 'xai') return 'Grok Imagine Video';
   if (model === 'atlas') return 'Atlas Video';
   if (model === 'gemini') return 'Gemini Video';
-  if (model === 'veo') return 'Veo';
+  if (model === 'veo') return 'Gemini Omni';
   if (model === 'sora') return 'Sora (OpenAI)';
   if (model === 'director') return 'Director';
-  if (model === 'seedance') return 'Seedance 2.0 Video';
+  if (model === 'seedance') return seedanceVideoTitle(getState().config);
   if (STABLE_DIFFUSION_VIDEO_MODELS.includes(model)) return 'Stable Diffusion Video';
   if (model === 'wan2.6-t2v') return 'wan2.6-t2v';
   if (model === 'wan22_ti2v_5b') return 'Wan 2.2 TI2V 5B';

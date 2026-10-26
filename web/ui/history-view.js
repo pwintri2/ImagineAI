@@ -70,7 +70,7 @@ async function handleListClick(e) {
     try {
       const result = await ensureVideoMp4(originalUrl);
       const mp4Url = result.mp4Url || '';
-      if (!mp4Url) throw new Error('No MP4 was returned.');
+      if (extensionFromUrl(mp4Url, '') !== '.mp4') throw new Error('No valid MP4 was returned.');
       btn.dataset.url = mp4Url;
       delete btn.dataset.convertMp4;
       btn.dataset.fallbackExt = '.mp4';
@@ -79,8 +79,7 @@ async function handleListClick(e) {
       showToast('MP4 ready', 'success');
     } catch (err) {
       console.warn('Could not create MP4 from history item:', err);
-      showToast('Could not make an MP4; saving the original video.', 'info');
-      downloadMedia(originalUrl, rawName, btn.dataset.fallbackExt || extensionFromUrl(originalUrl, '.webm'));
+      showToast(err.message || 'Could not make this history video into an MP4.', 'error');
       btn.textContent = originalLabel;
     } finally {
       btn.disabled = false;
@@ -150,7 +149,7 @@ function renderVideos(videoHistory, countEl) {
 
 export function historyVideoMp4Url(video) {
   const mp4Url = typeof video?.mp4Url === 'string' ? video.mp4Url.trim() : '';
-  if (mp4Url) return mp4Url;
+  if (extensionFromUrl(mp4Url, '') === '.mp4') return mp4Url;
   const url = typeof video?.url === 'string' ? video.url.trim() : '';
   return extensionFromUrl(url, '') === '.mp4' ? url : '';
 }
@@ -158,14 +157,16 @@ export function historyVideoMp4Url(video) {
 export function historyVideoSaveTarget(video) {
   const mp4Url = historyVideoMp4Url(video);
   if (mp4Url) return { url: mp4Url, label: 'Save MP4', fallbackExt: '.mp4', convertMp4: false };
-  const url = typeof video?.url === 'string' ? video.url.trim() : '';
+  const claimedMp4Url = typeof video?.mp4Url === 'string' ? video.mp4Url.trim() : '';
+  const regularUrl = typeof video?.url === 'string' ? video.url.trim() : '';
+  const url = claimedMp4Url || regularUrl;
   if (!url) return null;
-  const ext = extensionFromUrl(url, '.mp4');
+  const ext = extensionFromUrl(url, '');
   return {
     url,
-    label: ext === '.webm' ? 'Save MP4' : `Save ${ext.replace('.', '').toUpperCase()}`,
-    fallbackExt: ext,
-    convertMp4: ext !== '.mp4',
+    label: 'Save MP4',
+    fallbackExt: ext || '.webm',
+    convertMp4: true,
   };
 }
 

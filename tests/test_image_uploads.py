@@ -17,6 +17,19 @@ PNG_DATA_URL = "data:image/png;base64," + base64.b64encode(b"fake-png").decode("
 
 
 class ImageUploadTests(unittest.TestCase):
+    def test_flux_gguf_sizes_fit_local_fp32_profile(self):
+        self.assertEqual(server.FLUX_GGUF_ASPECT_TO_SIZE, {
+            "square": (512, 512),
+            "landscape": (576, 432),
+            "portrait": (432, 576),
+            "wide": (640, 368),
+            "tall": (368, 640),
+        })
+        for width, height in server.FLUX_GGUF_ASPECT_TO_SIZE.values():
+            self.assertEqual(width % 16, 0)
+            self.assertEqual(height % 16, 0)
+            self.assertLessEqual(width * height, 512 * 512)
+
     def test_zimage_graph_uses_source_image_latent(self):
         graph = server.build_zimage_graph({
             "prompt": "make it cinematic",
@@ -53,6 +66,76 @@ class ImageUploadTests(unittest.TestCase):
         self.assertEqual(graph["6"]["inputs"]["cfg"], 1.0)
         self.assertEqual(graph["6"]["inputs"]["steps"], 4)
         self.assertEqual(graph["6"]["inputs"]["sampler_name"], "euler")
+
+    def test_flux_schnell_graph_uses_gguf_components(self):
+        graph = server.build_flux_schnell_graph({
+            "prompt": "a tiny glass greenhouse on mars",
+            "width": 768,
+            "height": 768,
+            "batch_size": 2,
+            "steps": 4,
+            "seed": 123,
+            "backend": "gguf",
+        })
+
+        self.assertEqual(graph["1"], {
+            "class_type": "UnetLoaderGGUF",
+            "inputs": {"unet_name": server.FLUX_SCHNELL_GGUF_UNET},
+        })
+        self.assertEqual(graph["2"]["class_type"], "DualCLIPLoaderGGUF")
+        self.assertEqual(graph["13"], {
+            "class_type": "ModelComputeDtype",
+            "inputs": {"model": ["1", 0], "dtype": "fp32"},
+        })
+        self.assertEqual(graph["2"]["inputs"], {
+            "clip_name1": server.FLUX_SCHNELL_GGUF_T5,
+            "clip_name2": server.FLUX_SCHNELL_CLIP_L,
+            "type": "flux",
+        })
+        self.assertEqual(graph["3"]["inputs"]["vae_name"], server.FLUX_SCHNELL_VAE)
+        self.assertEqual(graph["5"]["class_type"], "EmptySD3LatentImage")
+        self.assertEqual(graph["5"]["inputs"], {"width": 768, "height": 768, "batch_size": 2})
+        self.assertEqual(graph["6"]["inputs"]["noise_seed"], 123)
+        self.assertEqual(graph["7"]["inputs"]["model"], ["13", 0])
+        self.assertEqual(graph["9"]["inputs"]["model"], ["13", 0])
+        self.assertEqual(graph["9"]["inputs"]["steps"], 4)
+        self.assertEqual(graph["10"]["class_type"], "SamplerCustomAdvanced")
+        self.assertEqual(graph["12"]["class_type"], "SaveImage")
+
+    def test_detect_models_prefers_complete_gguf_flux_install(self):
+        def node_info(node, key, options):
+            return {node: {"input": {"required": {key: [options]}}}}
+
+        responses = {
+            "/object_info/UNETLoader": node_info(
+                "UNETLoader", "unet_name", ["z_image_turbo_bf16.safetensors"],
+            ),
+            "/object_info/CLIPLoader": node_info(
+                "CLIPLoader", "clip_name", ["qwen_3_4b.safetensors"],
+            ),
+            "/object_info/VAELoader": node_info(
+                "VAELoader", "vae_name", [server.FLUX_SCHNELL_VAE],
+            ),
+            "/object_info/CheckpointLoaderSimple": node_info(
+                "CheckpointLoaderSimple", "ckpt_name", [server.FLUX_SCHNELL_FP8_CHECKPOINT],
+            ),
+            "/object_info/UnetLoaderGGUF": node_info(
+                "UnetLoaderGGUF", "unet_name", [server.FLUX_SCHNELL_GGUF_UNET],
+            ),
+            "/object_info/DualCLIPLoaderGGUF": node_info(
+                "DualCLIPLoaderGGUF",
+                "clip_name1",
+                [server.FLUX_SCHNELL_GGUF_T5, server.FLUX_SCHNELL_CLIP_L],
+            ),
+        }
+
+        with patch.object(server, "comfy_request", side_effect=lambda path, **_: responses[path]):
+            models = server.detect_models()
+
+        self.assertTrue(models["reachable"])
+        self.assertTrue(models["image"]["flux1_schnell"])
+        self.assertTrue(models["image"]["flux1_schnell_fp8"])
+        self.assertEqual(models["image"]["flux1_schnell_backend"], "gguf")
 
     def test_xai_image_upload_uses_edit_endpoint(self):
         calls = []

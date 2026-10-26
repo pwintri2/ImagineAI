@@ -138,9 +138,9 @@ class SeedanceTests(unittest.TestCase):
         self.assertEqual([call[5] for call in calls], [42, 42])
 
     def test_seedance_segment_lengths_keep_provider_minimum(self):
-        self.assertEqual(server.seedance_video_segment_lengths(16), [12, 4])
-        self.assertEqual(server.seedance_video_segment_lengths(19), [15, 4])
-        self.assertEqual(server.seedance_video_segment_lengths(20), [15, 5])
+        self.assertEqual(server.seedance_video_segment_lengths(16, "seedance-2-0"), [12, 4])
+        self.assertEqual(server.seedance_video_segment_lengths(19, "seedance-2-0"), [15, 4])
+        self.assertEqual(server.seedance_video_segment_lengths(20, "seedance-2-0"), [15, 5])
 
 
 if __name__ == "__main__":

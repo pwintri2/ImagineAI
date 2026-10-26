@@ -1,5 +1,6 @@
 import { getState, setState } from '../state.js';
-import { ENGINES } from '../services/image-gen.js';
+import { ENGINES, isSeedanceStillAvailable } from '../services/image-gen.js';
+import { kimiModelButton, kimiModelNote, handleKimiModelClick } from './kimi-model-option.js';
 
 const SUGGESTIONS = [
   'a cozy cabin in snowy mountains at golden hour, cinematic',
@@ -38,12 +39,15 @@ export function init() {
 function engineAvailable(engineId) {
   const { config } = getState();
   if (engineId === 'local') return !!(config.comfyReachable && config.models?.image?.zimage_turbo);
-  if (engineId === 'flux') return !!(config.comfyReachable && config.models?.image?.flux1_schnell_fp8);
+  if (engineId === 'flux') {
+    const image = config.models?.image;
+    return !!(config.comfyReachable && (image?.flux1_schnell || image?.flux1_schnell_fp8));
+  }
   if (engineId === 'gemini') return !!config.geminiConfigured;
   if (engineId === 'xai') return !!config.xaiConfigured;
   if (engineId === 'atlas') return !!config.atlasConfigured;
   if (engineId === 'sdxl') return !!(config.sdxlConfigured || config.stabilityConfigured);
-  if (engineId === 'seedance') return !!config.seedanceConfigured;
+  if (engineId === 'seedance') return isSeedanceStillAvailable(config);
   return false;
 }
 
@@ -102,9 +106,11 @@ export function render() {
             ${chip(`☁ ${ENGINES.gemini.title}`, 'gemini', 'engine', s.imageEngine === 'gemini', !geminiOk)}
             ${chip(`𝕏 ${ENGINES.xai.title}`, 'xai', 'engine', s.imageEngine === 'xai', !xaiOk)}
             ${chip(`◆ ${ENGINES.atlas.title}`, 'atlas', 'engine', s.imageEngine === 'atlas', !atlasOk)}
+            ${kimiModelButton('image')}
             ${chip(`▣ ${ENGINES.sdxl.title}`, 'sdxl', 'engine', s.imageEngine === 'sdxl', !sdxlOk)}
             ${chip(`◈ ${ENGINES.seedance.title}`, 'seedance', 'engine', s.imageEngine === 'seedance', !seedanceOk)}
           </div>
+          ${kimiModelNote('image')}
         </div>
         <div class="space-y-1.5">
           <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Ratio</label>
@@ -156,18 +162,22 @@ function engineHint(s) {
   if (s.imageEngine === 'atlas') {
     // With a reference image attached, the job runs the Atlas edit model instead.
     const model = s._draftImageSourceImage
-      ? (s.config.atlasImageEditModel || 'bytedance/seedream-v4.5/edit')
-      : (s.config.atlasImageModel || 'seedream-3.0');
+      ? (s.config.atlasImageEditModel || 'bytedance/seedream-v5.0-pro/edit')
+      : (s.config.atlasImageModel || 'bytedance/seedream-v5.0-pro/text-to-image');
     return `Cloud render via ${escapeHtml(model)} · uses your Atlas quota`;
   }
   if (s.imageEngine === 'sdxl') return `Cloud render via ${escapeHtml(s.config.modelslabImageModel || 'sdxl')} · uses your ModelsLab quota`;
-  if (s.imageEngine === 'seedance') return `Seedance still via ${escapeHtml(s.config.seedanceVideoModel || 'seedance-2-0')} return_last_frame · uses Seedance video credits`;
+  if (s.imageEngine === 'seedance') return `Seedance still via Seevio ${escapeHtml(s.config.seedanceVideoModel || 'seedance-2-5')} return_last_frame · uses Seevio video credits`;
   if (!s.config.comfyReachable) return 'ComfyUI not detected — start it, or switch to a cloud engine in Settings.';
-  if (s.imageEngine === 'flux') return 'Runs FLUX.1 Schnell FP8 locally on your GPU · text-to-image';
+  if (s.imageEngine === 'flux') {
+    const backend = s.config.models?.image?.flux1_schnell_backend;
+    return `Runs FLUX.1 Schnell ${backend === 'gguf' ? 'Q4' : 'FP8'} locally on your GPU · text-to-image`;
+  }
   return 'Runs locally on your GPU · free';
 }
 
 function handleClick(e) {
+  if (handleKimiModelClick(e, 'image')) return;
   const c = e.target.closest('.chip');
   if (c && !c.disabled) {
     const { group, value } = c.dataset;

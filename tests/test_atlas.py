@@ -15,6 +15,17 @@ import server  # noqa: E402
 
 
 class AtlasTests(unittest.TestCase):
+    def setUp(self):
+        # These regression cases exercise the still-supported Wan 2.7 schema.
+        # Current model defaults and Wan 3.0 have separate contract tests.
+        for name, value in (
+            ("DEFAULT_ATLAS_VIDEO_MODEL", "alibaba/wan-2.7/text-to-video"),
+            ("DEFAULT_ATLAS_I2V_MODEL", "alibaba/wan-2.7/image-to-video"),
+        ):
+            override = patch.object(server, name, value)
+            override.start()
+            self.addCleanup(override.stop)
+
     def test_atlas_key_uses_other_api_key_alias(self):
         with patch.object(server, "load_secrets", return_value={"atlas": "atlas-secret"}), \
              patch.dict(os.environ, {"ATLAS_API_KEY": "", "ATLASCLOUD_API_KEY": ""}):
